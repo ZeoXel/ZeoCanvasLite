@@ -1,0 +1,553 @@
+{
+  "version": 1,
+  "features": {
+    "image_generate": {
+      "base": 0,
+      "add": [
+        {
+          "param": "model"
+        }
+      ],
+      "multiply": [
+        {
+          "param": "imageCount"
+        }
+      ],
+      "paramTables": {
+        "model": {
+          "doubao-seedream-5-0-260128": 2.5,
+          "doubao-seedream-4-5-251128": 2.5,
+          "nano-banana": 1,
+          "nano-banana-2": 2,
+          "default": 1
+        },
+        "imageCount": {
+          "1": 1,
+          "2": 2,
+          "3": 3,
+          "4": 4,
+          "default": 1
+        }
+      },
+      "default": 1,
+      "rounding": "none"
+    },
+    "video_generate": {
+      "base": 0,
+      "add": [
+        {
+          "param": "model"
+        },
+        {
+          "param": "resolution"
+        },
+        {
+          "param": "duration"
+        },
+        {
+          "param": "generationMode"
+        },
+        {
+          "param": "hasReference"
+        },
+        {
+          "param": "serviceTier"
+        },
+        {
+          "param": "bgm"
+        },
+        {
+          "param": "audio"
+        },
+        {
+          "param": "generateAudio"
+        },
+        {
+          "param": "hasSubjectRef"
+        }
+      ],
+      "multiply": [],
+      "paramTables": {
+        "model": {
+          "veo3.1": 3,
+          "veo3.1-pro": 10,
+          "veo3.1-components": 3,
+          "doubao-seedance-1-5-pro-251215": 30,
+          "viduq3-pro": 30,
+          "viduq2-pro": 24,
+          "viduq2-turbo": 20,
+          "viduq2-pro-fast": 22,
+          "viduq2": 18,
+          "default": 24
+        },
+        "resolution": {
+          "540p": 0,
+          "720p": 6,
+          "1080p": 12,
+          "default": 6
+        },
+        "duration": {
+          "-1": 10,
+          "1": 2,
+          "2": 4,
+          "3": 6,
+          "4": 8,
+          "5": 10,
+          "6": 12,
+          "7": 14,
+          "8": 16,
+          "9": 18,
+          "10": 20,
+          "11": 22,
+          "12": 24,
+          "13": 26,
+          "14": 28,
+          "15": 30,
+          "16": 32,
+          "default": 10
+        },
+        "generationMode": {
+          "text2video": 0,
+          "img2video": 4,
+          "start-end": 8,
+          "reference": 10,
+          "default": 0
+        },
+        "hasReference": {
+          "yes": 4,
+          "no": 0,
+          "default": 0
+        },
+        "serviceTier": {
+          "default": 0,
+          "flex": -6
+        },
+        "bgm": {
+          "on": 3,
+          "off": 0,
+          "default": 0
+        },
+        "audio": {
+          "on": 6,
+          "off": 0,
+          "default": 0
+        },
+        "generateAudio": {
+          "on": 5,
+          "off": 0,
+          "default": 0
+        },
+        "hasSubjectRef": {
+          "yes": 8,
+          "no": 0,
+          "default": 0
+        }
+      },
+      "default": 42,
+      "rounding": "ceil"
+    },
+    "video_factory": {
+      "base": 2,
+      "add": [
+        {
+          "param": "model"
+        },
+        {
+          "param": "resolution"
+        },
+        {
+          "param": "duration"
+        },
+        {
+          "param": "generationMode"
+        },
+        {
+          "param": "hasReference"
+        },
+        {
+          "param": "serviceTier"
+        },
+        {
+          "param": "bgm"
+        },
+        {
+          "param": "audio"
+        },
+        {
+          "param": "generateAudio"
+        },
+        {
+          "param": "hasSubjectRef"
+        }
+      ],
+      "multiply": [],
+      "paramTables": {
+        "model": {
+          "veo3.1": 28,
+          "veo3.1-pro": 40,
+          "veo3.1-components": 34,
+          "doubao-seedance-1-5-pro-251215": 24,
+          "viduq3-pro": 28,
+          "viduq2-pro": 22,
+          "viduq2-turbo": 18,
+          "viduq2-pro-fast": 20,
+          "viduq2": 16,
+          "default": 22
+        },
+        "resolution": {
+          "540p": 0,
+          "720p": 6,
+          "1080p": 12,
+          "default": 6
+        },
+        "duration": {
+          "-1": 10,
+          "1": 2,
+          "2": 4,
+          "3": 6,
+          "4": 8,
+          "5": 10,
+          "6": 12,
+          "7": 14,
+          "8": 16,
+          "9": 18,
+          "10": 20,
+          "11": 22,
+          "12": 24,
+          "13": 26,
+          "14": 28,
+          "15": 30,
+          "16": 32,
+          "default": 10
+        },
+        "generationMode": {
+          "text2video": 0,
+          "img2video": 4,
+          "start-end": 8,
+          "reference": 10,
+          "default": 0
+        },
+        "hasReference": {
+          "yes": 4,
+          "no": 0,
+          "default": 0
+        },
+        "serviceTier": {
+          "default": 0,
+          "flex": -6
+        },
+        "bgm": {
+          "on": 3,
+          "off": 0,
+          "default": 0
+        },
+        "audio": {
+          "on": 6,
+          "off": 0,
+          "default": 0
+        },
+        "generateAudio": {
+          "on": 5,
+          "off": 0,
+          "default": 0
+        },
+        "hasSubjectRef": {
+          "yes": 8,
+          "no": 0,
+          "default": 0
+        }
+      },
+      "default": 40,
+      "rounding": "ceil"
+    },
+    "video_multiframe": {
+      "base": 8,
+      "add": [
+        {
+          "param": "model"
+        },
+        {
+          "param": "resolution"
+        },
+        {
+          "param": "frameCountBucket"
+        }
+      ],
+      "multiply": [
+        {
+          "param": "durationBucket"
+        }
+      ],
+      "paramTables": {
+        "model": {
+          "viduq3-pro": 28,
+          "viduq2-pro": 24,
+          "viduq2-turbo": 20,
+          "viduq2-pro-fast": 22,
+          "viduq2": 18,
+          "default": 20
+        },
+        "resolution": {
+          "540p": 0,
+          "720p": 6,
+          "1080p": 12,
+          "default": 6
+        },
+        "frameCountBucket": {
+          "2-3": 0,
+          "4-6": 6,
+          "7+": 12,
+          "default": 0
+        },
+        "durationBucket": {
+          "short": 1,
+          "medium": 1.35,
+          "long": 1.75,
+          "default": 1
+        }
+      },
+      "default": 36,
+      "rounding": "ceil"
+    },
+    "image_3d_camera": {
+      "base": 10,
+      "add": [],
+      "multiply": [],
+      "paramTables": {},
+      "default": 10,
+      "rounding": "none"
+    },
+    "audio_music": {
+      "base": 0,
+      "add": [
+        {
+          "param": "mv"
+        },
+        {
+          "param": "instrumental"
+        }
+      ],
+      "multiply": [],
+      "paramTables": {
+        "mv": {
+          "chirp-v3-0": 1,
+          "chirp-v3-5": 1,
+          "chirp-v4": 1,
+          "chirp-auk": 1,
+          "chirp-bluejay": 1,
+          "chirp-crow": 1,
+          "default": 1
+        },
+        "instrumental": {
+          "on": 4,
+          "off": 0,
+          "default": 0
+        }
+      },
+      "default": 46,
+      "rounding": "ceil"
+    },
+    "audio_voice": {
+      "base": 0,
+      "add": [
+        {
+          "param": "model"
+        },
+        {
+          "param": "soundEffect"
+        }
+      ],
+      "multiply": [],
+      "paramTables": {
+        "model": {
+          "speech-2.6-hd": 8,
+          "speech-2.6-turbo": 6,
+          "speech-02-hd": 8,
+          "speech-02-turbo": 6,
+          "speech-01-hd": 7,
+          "speech-01-turbo": 5,
+          "default": 8
+        },
+        "soundEffect": {
+          "spacious_echo": 2,
+          "auditorium_echo": 2,
+          "lofi_telephone": 1,
+          "robotic": 1,
+          "none": 0,
+          "default": 0
+        }
+      },
+      "default": 8,
+      "rounding": "ceil"
+    }
+  },
+  "fixedModelCredits": {
+    "video_generate": {
+      "veo3.1": 3,
+      "veo3.1-pro": 10,
+      "veo3.1-components": 3,
+      "doubao-seedance-1-5-pro-251215": 40
+    },
+    "video_factory": {
+      "veo3.1": 28,
+      "veo3.1-pro": 40,
+      "veo3.1-components": 34,
+      "doubao-seedance-1-5-pro-251215": 40
+    }
+  },
+  "viduPricing": {
+    "creditUnit": 10,
+    "q3": {
+      "model": "viduq3-pro",
+      "resolutionPerSecondCredits": {
+        "1080p": 1,
+        "720p": 0.9375,
+        "540p": 0.4375
+      },
+      "offPeakFactor": 0.5,
+      "offPeakRequiresAudio": true
+    },
+    "q2": {
+      "offPeakFactor": 0.5,
+      "offPeakRoundMode": "ceil",
+      "offPeakRoundUnit": 0.03125,
+      "audioExtraCredits": 0.46875,
+      "audioExtraModes": [
+        "img2video",
+        "reference"
+      ],
+      "rules": {
+        "viduq2-turbo": {
+          "img2video": {
+            "540p": {
+              "firstSecondCredits": 0.1875,
+              "incrementAfterFirstCredits": 0.0625
+            },
+            "720p": {
+              "firstSecondCredits": 0.25,
+              "secondSecondTotalCredits": 0.3125,
+              "incrementAfterSecondCredits": 0.3125
+            },
+            "1080p": {
+              "firstSecondCredits": 1.09375,
+              "incrementAfterFirstCredits": 0.3125
+            }
+          },
+          "start-end": {
+            "540p": {
+              "firstSecondCredits": 0.1875,
+              "incrementAfterFirstCredits": 0.0625
+            },
+            "720p": {
+              "firstSecondCredits": 0.25,
+              "secondSecondTotalCredits": 0.3125,
+              "incrementAfterSecondCredits": 0.3125
+            },
+            "1080p": {
+              "firstSecondCredits": 1.09375,
+              "incrementAfterFirstCredits": 0.3125
+            }
+          }
+        },
+        "viduq2-pro": {
+          "img2video": {
+            "540p": {
+              "firstSecondCredits": 0.25,
+              "secondSecondTotalCredits": 0.3125,
+              "incrementAfterSecondCredits": 0.15625
+            },
+            "720p": {
+              "firstSecondCredits": 0.46875,
+              "incrementAfterFirstCredits": 0.3125
+            },
+            "1080p": {
+              "firstSecondCredits": 1.71875,
+              "incrementAfterFirstCredits": 0.46875
+            }
+          },
+          "start-end": {
+            "540p": {
+              "firstSecondCredits": 0.25,
+              "secondSecondTotalCredits": 0.3125,
+              "incrementAfterSecondCredits": 0.15625
+            },
+            "720p": {
+              "firstSecondCredits": 0.46875,
+              "incrementAfterFirstCredits": 0.3125
+            },
+            "1080p": {
+              "firstSecondCredits": 1.71875,
+              "incrementAfterFirstCredits": 0.46875
+            }
+          },
+          "reference": {
+            "540p": {
+              "firstSecondCredits": 0.625,
+              "incrementAfterFirstCredits": 0.15625
+            },
+            "720p": {
+              "firstSecondCredits": 0.9375,
+              "incrementAfterFirstCredits": 0.15625
+            },
+            "1080p": {
+              "firstSecondCredits": 2.65625,
+              "incrementAfterFirstCredits": 0.3125
+            }
+          }
+        },
+        "viduq2-pro-fast": {
+          "img2video": {
+            "720p": {
+              "firstSecondCredits": 0.25,
+              "incrementAfterFirstCredits": 0.0625
+            },
+            "1080p": {
+              "firstSecondCredits": 0.5,
+              "incrementAfterFirstCredits": 0.125
+            }
+          },
+          "start-end": {
+            "720p": {
+              "firstSecondCredits": 0.25,
+              "incrementAfterFirstCredits": 0.0625
+            },
+            "1080p": {
+              "firstSecondCredits": 0.5,
+              "incrementAfterFirstCredits": 0.125
+            }
+          }
+        },
+        "viduq2": {
+          "text2video": {
+            "540p": {
+              "firstSecondCredits": 0.3125,
+              "incrementAfterFirstCredits": 0.0625
+            },
+            "720p": {
+              "firstSecondCredits": 0.46875,
+              "incrementAfterFirstCredits": 0.15625
+            },
+            "1080p": {
+              "firstSecondCredits": 0.625,
+              "incrementAfterFirstCredits": 0.3125
+            }
+          },
+          "reference": {
+            "540p": {
+              "firstSecondCredits": 0.46875,
+              "incrementAfterFirstCredits": 0.15625
+            },
+            "720p": {
+              "firstSecondCredits": 0.78125,
+              "incrementAfterFirstCredits": 0.15625
+            },
+            "1080p": {
+              "firstSecondCredits": 2.34375,
+              "incrementAfterFirstCredits": 0.3125
+            }
+          }
+        }
+      }
+    }
+  }
+}

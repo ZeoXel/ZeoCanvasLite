@@ -1,0 +1,16 @@
+services:
+  app:
+    image: crpi-dj1plh5tmmlskal3.cn-hangzhou.personal.cr.aliyuncs.com/studio1111/studio:latest
+    restart: always
+    env_file: .env.production
+    environment:
+      NEXTAUTH_URL: https://studio.lsaigc.com
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
