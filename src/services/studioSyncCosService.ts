@@ -1,4 +1,4 @@
-import type { StudioSyncData } from '@/services/studioSyncService';
+import type { StudioSyncData } from '@/services/studioSyncTypes';
 
 export interface StudioCosSyncRecord {
   data: StudioSyncData;

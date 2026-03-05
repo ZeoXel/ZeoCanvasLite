@@ -224,7 +224,7 @@ import { synthesizeSpeech, MinimaxGenerateParams } from '@/services/minimaxServi
 import { saveToStorage, loadFromStorage, saveSubjects, loadSubjects, loadMultipleFromStorage, markMigrationComplete } from '@/services/storage';
 import { getScopedKey, setStorageUserId } from '@/services/storageScope';
 import { loadTaskLogs, replaceTaskLogs, onTaskLogUpdate } from '@/services/taskLogService';
-import { type StudioSyncData } from '@/services/studioSyncService';
+import { type StudioSyncData } from '@/services/studioSyncTypes';
 import { fetchStudioSyncFromCos, pushStudioSyncToCos, pushStudioSyncBeacon } from '@/services/studioSyncCosService';
 import { getCache, setCache, resolveCanvasFromCache } from '@/services/studioCache';
 import { connectionKey } from '@/services/syncMergeUtils';
