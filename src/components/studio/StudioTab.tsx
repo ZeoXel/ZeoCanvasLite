@@ -4,9 +4,9 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import Image from 'next/image';
 import { Node } from './Node';
 import { SidebarDock } from './SidebarDock';
-import { useViewport, useInteraction, useCanvasData, useCanvasHistory } from '@/hooks/canvas';
+import { useViewport, useInteraction, useCanvasData, useCanvasHistory, useCanvasAPIRegistration } from '@/hooks/canvas';
 import { useBrand } from '@/hooks/useBrand';
-import { AssistantPanel } from './AssistantPanel';
+import AssistantPanel from './AssistantPanel';
 import { ImageCropper } from './ImageCropper';
 import { ImageEditOverlay } from './ImageEditOverlay';
 import { generateViduMultiFrame, queryViduTask, ViduMultiFrameConfig, compressImageForVidu } from '@/services/viduService';
@@ -591,11 +591,35 @@ export default function StudioTab() {
         connections, setConnections: setConnectionsRaw, connectionsRef,
         groups, setGroups: setGroupsRaw, groupsRef,
         loadData,
+        addNode: addNodeFromHook,
+        updateNode: updateNodeFromHook,
+        updateNodeData: updateNodeDataFromHook,
+        updateNodeStatus: updateNodeStatusFromHook,
+        deleteNode: deleteNodeFromHook,
+        getNode: getNodeFromHook,
+        getNodes: getNodesFromHook,
+        addConnection: addConnectionFromHook,
+        deleteConnection: deleteConnectionFromHook,
+        getConnections: getConnectionsFromHook,
     } = useCanvasData(mountCache ? {
         nodes: structuredClone(mountCache.canvasNodes),
         connections: structuredClone(mountCache.canvasConnections),
         groups: structuredClone(mountCache.canvasGroups),
     } : undefined);
+
+    // Register Canvas API
+    useCanvasAPIRegistration(useMemo(() => ({
+        addNode: addNodeFromHook,
+        updateNode: updateNodeFromHook,
+        updateNodeData: updateNodeDataFromHook,
+        updateNodeStatus: updateNodeStatusFromHook,
+        deleteNode: deleteNodeFromHook,
+        getNode: getNodeFromHook,
+        getNodes: getNodesFromHook,
+        addConnection: addConnectionFromHook,
+        deleteConnection: deleteConnectionFromHook,
+        getConnections: getConnectionsFromHook,
+    }), [addNodeFromHook, updateNodeFromHook, updateNodeDataFromHook, updateNodeStatusFromHook, deleteNodeFromHook, getNodeFromHook, getNodesFromHook, addConnectionFromHook, deleteConnectionFromHook, getConnectionsFromHook]));
 
     // History Hook - 撤销/重做
     const {
@@ -6186,11 +6210,8 @@ export default function StudioTab() {
                 )}
 
                 <AssistantPanel
-                    isOpen={isChatOpen}
+                    isVisible={isChatOpen}
                     onClose={() => setIsChatOpen(false)}
-                    externalDragState={chatDragState}
-                    externalIncomingAsset={chatIncomingAsset}
-                    onExternalIncomingAssetHandled={() => setChatIncomingAsset(null)}
                 />
 
                 {/* 底部工具栏：撤销/重做 + 缩放控制 */}
