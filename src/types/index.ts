@@ -190,6 +190,12 @@ export interface AppNode {
     // 3D 相机参数
     cameraParams?: CameraParams;           // 相机视角参数
     hideConfigPanel?: boolean;             // 隐藏底部配置面板
+
+    // Agent 元数据（OpenClaw 创建/管理的节点）
+    agent?: {
+      createdBy?: string;
+      purpose?: 'input' | 'intermediate' | 'output';
+    };
   };
   inputs: string[]; // IDs of nodes this node connects FROM
   modifiedAt?: number;
