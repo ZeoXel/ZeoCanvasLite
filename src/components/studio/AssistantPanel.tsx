@@ -184,7 +184,7 @@ export default function AssistantPanel({ onClose, isVisible }: AssistantPanelPro
   const statusText = connectionState === 'connected' ? '已连接' : connectionState === 'connecting' ? '连接中...' : '未连接';
 
   return (
-    <div className="fixed right-0 top-0 h-full w-[400px] bg-gray-900 text-white flex flex-col z-40 shadow-2xl border-l border-gray-700">
+    <div className="fixed right-0 top-0 h-full w-[360px] bg-gray-900 text-white flex flex-col z-20 shadow-2xl border-l border-gray-700">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-sm">OpenClaw Terminal</span>
