@@ -4666,13 +4666,10 @@ export default function StudioTab() {
     }, [currentCanvasId, nodes, connections, groups, pan, scale]);
 
     const createNewCanvas = useCallback(() => {
-        // 先保存当前画布
-        if (currentCanvasId && nodes.length > 0) {
-            saveCurrentCanvas();
-        }
-
-        // 清除初始跳过标记，确保新画布会被持久化
-        skipInitialPersistRef.current = false;
+        // 先保存当前画布（含最新 nodes）
+        const latestNodes = nodesRef.current;
+        const latestConnections = connectionsRef.current;
+        const latestGroups = groupsRef.current;
 
         const now = Date.now();
         const newCanvas: Canvas = {
@@ -4687,16 +4684,50 @@ export default function StudioTab() {
             scale: 1
         };
 
-        setCanvases(prev => [newCanvas, ...prev]);
+        // 构建包含当前画布最新内容的完整列表
+        const updatedCanvases = currentCanvasId
+            ? canvases.map(c =>
+                c.id === currentCanvasId
+                    ? { ...c, nodes: latestNodes, connections: latestConnections, groups: latestGroups, updatedAt: now }
+                    : c
+            )
+            : canvases;
+        const newCanvases = [newCanvas, ...updatedCanvases];
+
+        // 直接写入 IndexedDB + 内存 cache，不依赖 persist effect 的各种 guard
+        saveToStorage('canvases', newCanvases);
+        saveToStorage('currentCanvasId', newCanvas.id);
+        saveToStorage('nodes', []);
+        saveToStorage('connections', []);
+        saveToStorage('groups', []);
+        const existingCache = getCache();
+        setCache({
+            assets: existingCache?.assets || [],
+            workflows: existingCache?.workflows || [],
+            subjects: existingCache?.subjects || [],
+            nodeConfigs: existingCache?.nodeConfigs || {},
+            taskLogs: existingCache?.taskLogs || [],
+            deletedItems: existingCache?.deletedItems || {},
+            canvases: newCanvases,
+            currentCanvasId: newCanvas.id,
+            nodes: [],
+            connections: [],
+            groups: [],
+            timestamp: now,
+        });
+
+        // 重置 skipInitialPersistRef，后续 persist effect 也能正常写入
+        skipInitialPersistRef.current = false;
+
+        setCanvases(newCanvases);
         setCurrentCanvasId(newCanvas.id);
         setNodes([]);
         setConnections([]);
         setGroups([]);
         clearSelection();
-        // 重置视口
         setPan({ x: 0, y: 0 });
         setScale(1);
-    }, [currentCanvasId, nodes.length, canvases.length, saveCurrentCanvas, clearSelection]);
+    }, [currentCanvasId, canvases, nodesRef, connectionsRef, groupsRef, clearSelection]);
 
     const selectCanvas = useCallback((id: string) => {
         if (id === currentCanvasId) return;
