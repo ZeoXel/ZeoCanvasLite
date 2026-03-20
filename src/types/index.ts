@@ -107,11 +107,16 @@ export interface AppNode {
   title: string;
   status: NodeStatus;
   data: {
-    prompt?: string; // 生成/优化后的提示词（用于下游节点）
-    userInput?: string; // 用户的简短想法（用于生成提示词的输入）
+    prompt?: string; // 文本内容（用于下游节点）
+    userInput?: string; // 用户的简短想法（旧字段，保留兼容）
     model?: string; // Selected AI model
+    textStyle?: {
+      fontSize?: number;   // 字号: 10 | 12 | 14 | 16 | 20 | 24
+      color?: string;      // 文字颜色 (CSS color)
+    };
     image?: string; // URL (COS) or legacy Base64
     originalImage?: string; // URL (COS) or legacy Base64 (Original image before doodles)
+    editOriginImage?: string; // 首次进入编辑时的基准底图，用于“重置初始”
     canvasData?: string; // Base64 PNG (Doodle layer only, transparent background)
     images?: string[]; // Array of URLs (legacy Base64 supported)
     imageCount?: number; // Number of images to generate (1-4)
@@ -126,7 +131,7 @@ export interface AppNode {
     error?: string;
     progress?: string;
     uploading?: boolean; // UI: 上传中状态
-    mediaOrigin?: 'uploaded' | 'generated'; // 媒体来源（上传素材/模型生成）
+    mediaOrigin?: 'uploaded' | 'generated' | 'edited'; // 媒体来源（上传素材/模型生成/本地编辑）
     estimatedCredits?: number; // UI: 按钮积分预估（展示态）
     estimateKey?: string; // UI: 预估缓存键（展示态）
 
@@ -190,12 +195,6 @@ export interface AppNode {
     // 3D 相机参数
     cameraParams?: CameraParams;           // 相机视角参数
     hideConfigPanel?: boolean;             // 隐藏底部配置面板
-
-    // Agent 元数据（OpenClaw 创建/管理的节点）
-    agent?: {
-      createdBy?: string;
-      purpose?: 'input' | 'intermediate' | 'output';
-    };
   };
   inputs: string[]; // IDs of nodes this node connects FROM
   modifiedAt?: number;

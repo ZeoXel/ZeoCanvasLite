@@ -1,15 +1,22 @@
 "use client";
 
-import React, { useState, useCallback, useRef } from 'react';
-import { X, Plus, Trash2, Loader2 } from 'lucide-react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
+import { X, Plus, Trash2, Loader2, ImagePlus } from 'lucide-react';
 import type { Subject, SubjectImage } from '@/types';
 import { generateSubjectId, generateThumbnail, uploadSubjectImage, uploadSubjectThumbnail } from '@/services/subjectService';
-import { getSubjectImageSrc, getSubjectThumbnailSrc } from '@/services/cosStorage';
-import { SubjectExtractor } from './SubjectExtractor';
+import { getSubjectImageSrc, getSubjectThumbnailSrc, isCosUrl } from '@/services/cosStorage';
+import {
+  createDraftSubjectImage,
+  seedSubjectImages,
+  tryAppendSubjectImage,
+  type SubjectImageAppendError,
+  uniqueNonEmptyImageSources,
+} from './subjectEditorUtils';
 
 interface SubjectEditorProps {
   subject?: Subject | null;  // 编辑模式传入，新建模式为 null
   initialImage?: string;     // 初始图片（从画布创建主体时传入）
+  canvasImageSources?: string[]; // 当前画布可用图片素材
   onSave: (subject: Subject) => void;
   onCancel: () => void;
 }
@@ -17,6 +24,7 @@ interface SubjectEditorProps {
 export const SubjectEditor: React.FC<SubjectEditorProps> = ({
   subject,
   initialImage,
+  canvasImageSources = [],
   onSave,
   onCancel,
 }) => {
@@ -26,12 +34,39 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
   // 表单状态
   const [name, setName] = useState(subject?.name || '');
   const [description, setDescription] = useState(subject?.description || '');
-  const [images, setImages] = useState<SubjectImage[]>(subject?.images || []);
+  const [images, setImages] = useState<SubjectImage[]>(() =>
+    seedSubjectImages(subject?.images || [], initialImage, createDraftSubjectImage)
+  );
 
   // UI 状态
-  const [extractorSource, setExtractorSource] = useState<string | null>(initialImage || null);
+  const [isCanvasPickerOpen, setIsCanvasPickerOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const appendImageSource = useCallback((source: string): SubjectImageAppendError | undefined => {
+    let appendError: SubjectImageAppendError | undefined;
+    setImages((prev) => {
+      const result = tryAppendSubjectImage(prev, source, createDraftSubjectImage);
+      appendError = result.error;
+      return result.images;
+    });
+    return appendError;
+  }, []);
+
+  const handleAppendError = useCallback((error?: SubjectImageAppendError) => {
+    if (error === 'limit') {
+      alert('最多支持 3 张主体图片');
+      return;
+    }
+    if (error === 'duplicate') {
+      alert('该图片已添加');
+    }
+  }, []);
+
+  const availableCanvasImages = useMemo(() => {
+    const existingSources = new Set(images.map((img) => getSubjectImageSrc(img)).filter(Boolean));
+    return uniqueNonEmptyImageSources(canvasImageSources).filter((src) => !existingSources.has(src));
+  }, [canvasImageSources, images]);
 
   // 处理文件上传
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -45,8 +80,8 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
       const reader = new FileReader();
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
-        // 打开提取器
-        setExtractorSource(base64);
+        const appendError = appendImageSource(base64);
+        handleAppendError(appendError);
         setIsUploading(false);
       };
       reader.onerror = () => {
@@ -61,25 +96,20 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
 
     // 清空 input 以允许重复选择同一文件
     e.target.value = '';
-  }, []);
-
-  // 处理提取完成
-  const handleExtracted = useCallback(async (result: SubjectImage) => {
-    // 限制最多 3 张图片（Vidu 限制）
-    if (images.length >= 3) {
-      alert('最多支持 3 张主体图片');
-      setExtractorSource(null);
-      return;
-    }
-
-    setImages(prev => [...prev, result]);
-    setExtractorSource(null);
-  }, [images.length]);
+  }, [appendImageSource, handleAppendError]);
 
   // 删除图片
   const handleRemoveImage = useCallback((imageId: string) => {
     setImages(prev => prev.filter(img => img.id !== imageId));
   }, []);
+
+  const handleAddCanvasImage = useCallback((imageSource: string) => {
+    const appendError = appendImageSource(imageSource);
+    handleAppendError(appendError);
+    if (!appendError) {
+      setIsCanvasPickerOpen(false);
+    }
+  }, [appendImageSource, handleAppendError]);
 
   // 保存主体
   const handleSave = useCallback(async () => {
@@ -99,14 +129,15 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
       const subjectId = subject?.id || generateSubjectId();
       const now = Date.now();
 
-      // 上传图片到 COS（仅上传新图片，已有 URL 的跳过）
+      // 上传图片到 COS（仅跳过已在 COS 上的图片，外部临时 URL 需转存）
       const uploadedImages = await Promise.all(
         images.map(async (img) => {
-          // 如果已有 URL，直接返回
-          if (img.url) return img;
-          // 如果只有 base64，上传到 COS
-          if (img.base64) {
-            const uploaded = await uploadSubjectImage(subjectId, img.base64, img.angle);
+          // 已是 COS URL，无需重新上传
+          if (img.url && isCosUrl(img.url)) return img;
+          // 外部 URL（如 fal.ai 临时链接）或 base64，都需上传到 COS
+          const source = img.url || img.base64;
+          if (source) {
+            const uploaded = await uploadSubjectImage(subjectId, source, img.angle);
             return uploaded;
           }
           return img;
@@ -181,7 +212,7 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
                 onKeyDown={(e) => e.stopPropagation()}
                 placeholder="如：机器人角色、红色跑车..."
                 className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:border-blue-500 transition-colors"
-                autoFocus={!extractorSource}
+                autoFocus
               />
             </div>
 
@@ -219,20 +250,31 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
                 ))}
 
                 {images.length < 3 && (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploading}
-                    className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 dark:hover:border-blue-400 transition-colors flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-blue-500"
-                  >
-                    {isUploading ? (
-                      <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <>
-                        <Plus size={16} />
-                        <span className="text-[9px]">添加</span>
-                      </>
+                  <>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploading}
+                      className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 dark:hover:border-blue-400 transition-colors flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-blue-500 disabled:opacity-60"
+                    >
+                      {isUploading ? (
+                        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <Plus size={16} />
+                          <span className="text-[9px]">上传</span>
+                        </>
+                      )}
+                    </button>
+                    {availableCanvasImages.length > 0 && (
+                      <button
+                        onClick={() => setIsCanvasPickerOpen(true)}
+                        className="w-20 h-20 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-500 dark:hover:border-blue-400 transition-colors flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-blue-500"
+                      >
+                        <ImagePlus size={16} />
+                        <span className="text-[9px]">画布</span>
+                      </button>
                     )}
-                  </button>
+                  </>
                 )}
               </div>
               <input
@@ -281,13 +323,45 @@ export const SubjectEditor: React.FC<SubjectEditorProps> = ({
         </div>
       </div>
 
-      {/* 主体提取器 */}
-      {extractorSource && (
-        <SubjectExtractor
-          sourceImage={extractorSource}
-          onExtracted={handleExtracted}
-          onCancel={() => setExtractorSource(null)}
-        />
+      {/* 画布素材选择器 */}
+      {isCanvasPickerOpen && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={() => setIsCanvasPickerOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">从画布添加辅助参考图</h3>
+              <button
+                onClick={() => setIsCanvasPickerOpen(false)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                <X size={16} className="text-slate-500" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              {availableCanvasImages.length === 0 ? (
+                <div className="text-xs text-slate-500 dark:text-slate-400">暂无可添加的画布图片素材</div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {availableCanvasImages.map((source) => (
+                    <button
+                      key={source}
+                      onClick={() => handleAddCanvasImage(source)}
+                      className="relative aspect-square rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-400 transition-colors"
+                      title="添加为辅助参考图"
+                    >
+                      <img src={source} alt="画布素材" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

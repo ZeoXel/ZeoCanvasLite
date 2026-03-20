@@ -29,9 +29,19 @@ export interface ImageGenerateOptions {
 
 // ==================== 内部工具 ====================
 
+const MODEL_ID_ALIASES: Record<string, string> = {
+  // Seedream 3.0 系列：统一对齐到控制台示例中的带后缀连字符格式
+  'doubao-seedream-3.0-t2i': 'doubao-seedream-3-0-t2i-250415',
+  'doubao-seedream-3-0-t2i': 'doubao-seedream-3-0-t2i-250415',
+  'doubao-seededit-3.0-i2i': 'doubao-seededit-3-0-i2i-250628',
+  'doubao-seededit-3-0-i2i': 'doubao-seededit-3-0-i2i-250628',
+};
+
+const resolveGatewayModelId = (modelId: string): string => MODEL_ID_ALIASES[modelId] || modelId;
+
 const getProviderFromModel = (model: string): 'nano-banana' | 'seedream' | 'gemini' => {
   if (model.includes('nano-banana')) return 'nano-banana';
-  if (model.includes('seedream') || model.includes('doubao-seedream')) return 'seedream';
+  if (model.includes('seedream') || model.includes('seededit')) return 'seedream';
   return 'gemini';
 };
 
@@ -119,15 +129,18 @@ const generateSingleImage = async (
   options: ImageGenerateOptions,
   provider: 'nano-banana' | 'seedream' | 'gemini'
 ): Promise<ImageGenerationResult> => {
+  const resolvedModel = resolveGatewayModelId(options.model);
+
   console.log('[generateSingleImage] Starting with:', {
     baseUrl,
     hasApiKey: !!apiKey,
     provider,
     model: options.model,
+    resolvedModel,
   });
 
   const body: Record<string, any> = {
-    model: options.model,
+    model: resolvedModel,
     prompt: options.prompt,
     response_format: options.responseFormat || (provider === 'gemini' ? 'b64_json' : 'url'),
   };
@@ -215,6 +228,11 @@ export const editImage = async (
 // ==================== 模型配置 ====================
 
 export const IMAGE_MODELS = [
+  // Seedream
+  { id: 'doubao-seedream-5-0-260128', name: 'Seedream 5.0 Lite', provider: 'seedream' },
+  { id: 'doubao-seedream-4-5-251128', name: 'Seedream 4.5', provider: 'seedream' },
+  { id: 'doubao-seedream-3-0-t2i-250415', name: 'Seedream 3.0', provider: 'seedream' },
+  { id: 'doubao-seededit-3-0-i2i-250628', name: 'Seedream 3.0', provider: 'seedream' },
   // Nano Banana
   { id: 'nano-banana', name: 'Nano Banana', provider: 'nano-banana' },
   { id: 'nano-banana-2', name: 'Nano Banana Pro', provider: 'nano-banana' },

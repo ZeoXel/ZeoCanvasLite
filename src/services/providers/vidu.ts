@@ -35,7 +35,7 @@ type GatewayConfig = { baseUrl?: string; apiKey?: string };
 const getViduConfig = (gateway?: GatewayConfig) => {
   const baseUrl = gateway?.baseUrl || process.env.OPENAI_BASE_URL
     || process.env.GATEWAY_BASE_URL
-    || 'https://api.lsaigc.com';
+    || 'https://your-api-gateway.com';
   const apiKey = gateway?.apiKey || process.env.OPENAI_API_KEY;
   return { baseUrl, apiKey };
 };

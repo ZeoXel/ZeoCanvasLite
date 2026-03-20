@@ -1,12 +1,12 @@
 export const GATEWAY_CONFIG = {
   lsapi: {
-    apiUrl: 'https://api.lsaigc.com',
+    apiUrl: 'https://your-api-gateway.com',
     apiPath: '/v1',
     quotaEndpoint: '/api/usage/token/', // New API usage endpoint (requires trailing slash)
     name: 'LSAIGC 网关',
     description: 'LSAIGC 生产网关',
     conversionRate: 500000,
-    pricingMultiplier: 2,
+    pricingMultiplier: 1,
   },
 } as const;
 
@@ -14,7 +14,7 @@ export type GatewayProvider = keyof typeof GATEWAY_CONFIG;
 
 const DEFAULT_PROVIDER: GatewayProvider = 'lsapi';
 const DEFAULT_CONVERSION_RATE = 500000;
-const DEFAULT_PRICING_MULTIPLIER = 2;
+const DEFAULT_PRICING_MULTIPLIER = 1;
 
 export function getApiUrlByProvider(provider?: string): string {
   const config = GATEWAY_CONFIG[provider as GatewayProvider];

@@ -46,6 +46,46 @@ export function setCacheCurrentCanvasId(id: string): void {
   }
 }
 
+/** 新建画布时同步更新缓存，避免进入画布页后命中旧缓存 */
+export function appendCanvasToCache(canvas: Canvas): void {
+  if (!_cache) return;
+
+  const nextCanvases = [canvas, ..._cache.canvases.filter(c => c.id !== canvas.id)];
+  _cache = {
+    ..._cache,
+    canvases: nextCanvases,
+    currentCanvasId: canvas.id,
+    nodes: canvas.nodes || [],
+    connections: canvas.connections || [],
+    groups: canvas.groups || [],
+    timestamp: Date.now(),
+  };
+}
+
+/** 删除画布时同步更新缓存，避免后续命中已删除画布 */
+export function removeCanvasFromCache(id: string, nextCurrentCanvasId?: string | null): void {
+  if (!_cache) return;
+
+  const nextCanvases = _cache.canvases.filter((c) => c.id !== id);
+  const resolvedCurrentId = nextCurrentCanvasId !== undefined
+    ? nextCurrentCanvasId
+    : (_cache.currentCanvasId === id ? (nextCanvases[0]?.id || null) : _cache.currentCanvasId);
+
+  const currentCanvas = resolvedCurrentId
+    ? nextCanvases.find((c) => c.id === resolvedCurrentId) || nextCanvases[0]
+    : null;
+
+  _cache = {
+    ..._cache,
+    canvases: nextCanvases,
+    currentCanvasId: currentCanvas?.id || null,
+    nodes: currentCanvas?.nodes || [],
+    connections: currentCanvas?.connections || [],
+    groups: currentCanvas?.groups || [],
+    timestamp: Date.now(),
+  };
+}
+
 /**
  * 从缓存中解析出当前画布的初始数据（同步调用，用于 useState 初始化）
  * 返回 null 表示无缓存

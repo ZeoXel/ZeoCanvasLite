@@ -29,6 +29,8 @@ export const IMAGE_PROVIDERS: ProviderDefinition[] = [
     models: [
       { id: 'doubao-seedream-5-0-260128', name: 'Seedream 5.0 Lite', isDefault: true },
       { id: 'doubao-seedream-4-5-251128', name: 'Seedream 4.5' },
+      { id: 'doubao-seedream-3-0-t2i-250415', name: 'Seedream 3.0' },
+      { id: 'doubao-seededit-3-0-i2i-250628', name: 'Seedream 3.0' },
     ],
     capabilities: {
       aspectRatios: ['1:1', '4:3', '3:4', '16:9', '9:16'],

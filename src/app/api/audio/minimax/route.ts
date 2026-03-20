@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
 // POST: 语音合成
 export async function POST(request: NextRequest) {
     try {
-        const { apiKey } = await getAssignedGatewayKey('minimax');
+        const { apiKey } = await getAssignedGatewayKey();
         if (!apiKey) {
             return NextResponse.json(
                 {
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
 // GET: 查询异步任务状态
 export async function GET(request: NextRequest) {
     try {
-        const { apiKey } = await getAssignedGatewayKey('minimax');
+        const { apiKey } = await getAssignedGatewayKey();
         if (!apiKey) {
             return NextResponse.json(
                 {

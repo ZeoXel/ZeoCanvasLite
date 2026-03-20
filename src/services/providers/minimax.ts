@@ -20,7 +20,7 @@ const getMinimaxConfig = (gateway?: GatewayConfig) => {
     || process.env.OPENAI_BASE_URL
     || process.env.OPENAI_API_BASE
     || process.env.GATEWAY_BASE_URL
-    || 'https://api.lsaigc.com';
+    || 'https://your-api-gateway.com';
   const apiKey = gateway?.apiKey || process.env.MINIMAX_API_KEY || process.env.OPENAI_API_KEY;
   return { baseUrl, apiKey };
 };

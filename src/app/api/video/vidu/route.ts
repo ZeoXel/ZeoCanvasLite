@@ -23,7 +23,7 @@ export const dynamic = 'force-dynamic';
 // POST: 创建视频生成任务
 export async function POST(request: NextRequest) {
     try {
-        const { userId, apiKey } = await getAssignedGatewayKey('vidu');
+        const { userId, apiKey } = await getAssignedGatewayKey();
         if (!userId) {
             return NextResponse.json({ error: '未登录，请先登录' }, { status: 401 });
         }
@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
 // GET: 查询任务状态
 export async function GET(request: NextRequest) {
     try {
-        const { userId, apiKey } = await getAssignedGatewayKey('vidu');
+        const { userId, apiKey } = await getAssignedGatewayKey();
         if (!userId) {
             return NextResponse.json({ error: '未登录，请先登录' }, { status: 401 });
         }

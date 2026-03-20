@@ -11,7 +11,8 @@ import * as veoService from '@/services/providers/veo';
 import * as seedanceService from '@/services/providers/seedance';
 import * as viduService from '@/services/providers/vidu';
 import { assertViduModelModeSupported } from '@/services/providers/viduCapabilities';
-import { smartUploadVideoServer, buildMediaPathServer } from '@/services/cosStorageServer';
+import { mergeViduReferenceImages } from '@/services/providers/viduReference';
+import { smartUploadVideoServer, smartUploadBatchServer, buildMediaPathServer } from '@/services/cosStorageServer';
 import { getAssignedGatewayKey } from '@/lib/server/assignedKey';
 
 // Route Segment Config
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
         }
 
         const providerId = getVideoProviderId(model);
-        const { userId, apiKey } = await getAssignedGatewayKey(providerId || 'gateway');
+        const { userId, apiKey } = await getAssignedGatewayKey();
 
         if (!userId) {
             return NextResponse.json({ error: '未登录，请先登录' }, { status: 401 });
@@ -117,12 +118,13 @@ export async function POST(request: NextRequest) {
                     const subjectImages = viduSubjects
                         .flatMap((s: any) => s.images || [])
                         .filter(Boolean);
-                    // 图序约定：上游输入图优先，其次主体图；去重后最多 7 张（Vidu 限制）
-                    const mergedImages = Array.from(new Set([...upstreamImages, ...subjectImages])).slice(0, 7);
+                    const mergedImages = mergeViduReferenceImages(upstreamImages, viduSubjects);
                     console.log(`[Studio Video API] Vidu reference images merged: upstream=${upstreamImages.length}, subject=${subjectImages.length}, merged=${mergedImages.length}`);
+                    // 将所有非 COS 图片（如 fal.ai 临时 URL、base64）转存到 COS，确保 Vidu 可下载
+                    const cosImages = await smartUploadBatchServer(mergedImages, buildMediaPathServer('images', userId));
                     taskId = await viduService.reference2video({
                         model: model as viduService.ViduModel,
-                        images: mergedImages,
+                        images: cosImages,
                         prompt,
                         duration: safeDuration,
                         resolution: config.resolution as viduService.Resolution,
@@ -231,7 +233,7 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        const { userId, apiKey } = await getAssignedGatewayKey(provider);
+        const { userId, apiKey } = await getAssignedGatewayKey();
         if (!userId) {
             return NextResponse.json({ error: '未登录，请先登录' }, { status: 401 });
         }

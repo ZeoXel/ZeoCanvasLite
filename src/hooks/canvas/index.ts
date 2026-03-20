@@ -17,7 +17,5 @@ export type {
 export { useCanvasData } from './useCanvasData';
 export type { CanvasDataState } from './useCanvasData';
 
-export { useCanvasAPIRegistration } from './useCanvasAPIRegistration';
-
 export { useHistory, useCanvasHistory } from './useHistory';
 export type { HistoryState, CanvasSnapshot } from './useHistory';

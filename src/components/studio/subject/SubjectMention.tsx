@@ -11,6 +11,7 @@ interface SubjectMentionProps {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   value: string;
   onChange: (newValue: string) => void;
+  getDisabledReason?: (subject: Subject) => string | undefined;
 }
 
 /**
@@ -23,6 +24,7 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
   textareaRef,
   value,
   onChange,
+  getDisabledReason,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -139,6 +141,7 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
   // 插入提及 - 必须在键盘导航 useEffect 之前声明
   const insertMention = useCallback((subject: Subject) => {
     if (mentionStart === -1) return;
+    if (getDisabledReason?.(subject)) return;
 
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -164,13 +167,23 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
     setQuery('');
     setMentionStart(-1);
     lastQueryRef.current = '';
-  }, [mentionStart, onChange, textareaRef]);
+  }, [mentionStart, onChange, textareaRef, getDisabledReason]);
 
   // 键盘导航 - 使用 ref 来避免闭包陷阱
   const filteredSubjectsRef = useRef(filteredSubjects);
   const selectedIndexRef = useRef(selectedIndex);
   filteredSubjectsRef.current = filteredSubjects;
   selectedIndexRef.current = selectedIndex;
+
+  useEffect(() => {
+    if (!isOpen || filteredSubjects.length === 0) return;
+    const current = filteredSubjects[selectedIndex];
+    if (current && !getDisabledReason?.(current)) return;
+    const nextSelectable = filteredSubjects.findIndex((subject) => !getDisabledReason?.(subject));
+    if (nextSelectable >= 0 && nextSelectable !== selectedIndex) {
+      setSelectedIndex(nextSelectable);
+    }
+  }, [filteredSubjects, getDisabledReason, isOpen, selectedIndex]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -201,7 +214,9 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
           if (currentFiltered[currentIndex]) {
             e.preventDefault();
             e.stopPropagation();
-            insertMention(currentFiltered[currentIndex]);
+            if (!getDisabledReason?.(currentFiltered[currentIndex])) {
+              insertMention(currentFiltered[currentIndex]);
+            }
           }
           break;
         case 'Escape':
@@ -215,10 +230,11 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
     // 使用 capture 阶段确保优先处理
     textarea.addEventListener('keydown', handleKeyDown, true);
     return () => textarea.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, textareaRef, insertMention]);
+  }, [isOpen, textareaRef, insertMention, getDisabledReason]);
 
   // 点击选择
   const handleSelect = (subject: Subject) => {
+    if (getDisabledReason?.(subject)) return;
     insertMention(subject);
   };
 
@@ -285,15 +301,22 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
         {filteredSubjects.map((subject, index) => (
           <div
             key={subject.id}
+            data-disabled={Boolean(getDisabledReason?.(subject))}
             className={`
               flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors
+              ${getDisabledReason?.(subject)
+                ? 'opacity-45 cursor-not-allowed bg-transparent'
+                : ''
+              }
               ${index === selectedIndex
                 ? 'bg-violet-50 dark:bg-violet-900/30'
                 : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'
               }
             `}
             onClick={() => handleSelect(subject)}
-            onMouseEnter={() => setSelectedIndex(index)}
+            onMouseEnter={() => {
+              if (!getDisabledReason?.(subject)) setSelectedIndex(index);
+            }}
           >
             {/* 缩略图 */}
             <div className="w-8 h-8 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700 shrink-0">
@@ -308,7 +331,11 @@ export const SubjectMention: React.FC<SubjectMentionProps> = ({
               <div className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">
                 {subject.name}
               </div>
-              {subject.description && (
+              {getDisabledReason?.(subject) ? (
+                <div className="text-[10px] text-amber-500 dark:text-amber-400 truncate">
+                  {getDisabledReason(subject)}
+                </div>
+              ) : subject.description && (
                 <div className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
                   {subject.description}
                 </div>

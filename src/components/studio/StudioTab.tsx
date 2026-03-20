@@ -4,9 +4,9 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import Image from 'next/image';
 import { Node } from './Node';
 import { SidebarDock } from './SidebarDock';
-import { useViewport, useInteraction, useCanvasData, useCanvasHistory, useCanvasAPIRegistration } from '@/hooks/canvas';
+import { useViewport, useInteraction, useCanvasData, useCanvasHistory } from '@/hooks/canvas';
 import { useBrand } from '@/hooks/useBrand';
-import AssistantPanel from './AssistantPanel';
+import { AssistantPanel } from './AssistantPanel';
 import { ImageCropper } from './ImageCropper';
 import { ImageEditOverlay } from './ImageEditOverlay';
 import { generateViduMultiFrame, queryViduTask, ViduMultiFrameConfig, compressImageForVidu } from '@/services/viduService';
@@ -14,9 +14,15 @@ import { recordAudioConsumption, recordImageConsumption, recordVideoConsumption 
 import { SettingsModal } from './SettingsModal';
 import { AppNode, NodeType, NodeStatus, Connection, ContextMenuState, Group, Workflow, Canvas, VideoGenerationMode, Subject } from '@/types';
 import { SubjectEditor } from './subject';
+import { uniqueNonEmptyImageSources } from './subject/subjectEditorUtils';
 import { urlToBase64 } from '@/services/providers';
-import { parseSubjectReferences, getPrimaryImage } from '@/services/subjectService';
+import { parseSubjectReferences, cleanSubjectReferences, getPrimaryImage } from '@/services/subjectService';
 import { getSubjectImageSrc, uploadToCos, buildMediaPath } from '@/services/cosStorage';
+import { removeItemWithTombstone } from '@/services/deletionUtils';
+import { UserInfoWidget } from './UserInfoWidget';
+import { UserInfoModal } from './UserInfoModal';
+import { LoginModal } from './LoginModal';
+import { useAuth } from '@/contexts/AuthContext';
 import { getImageModelConfig } from './shared/constants';
 
 import Link from "next/link";
@@ -66,6 +72,22 @@ const ensureSeedreamInputImage = async (image: string): Promise<string> => {
     return image;
 };
 
+const isSeedreamFamilyModel = (model: string): boolean => {
+    return model.includes('seedream') || model.includes('seededit');
+};
+
+const SEEDREAM_30_T2I_MODEL = 'doubao-seedream-3-0-t2i-250415';
+const SEEDEDIT_30_I2I_MODEL = 'doubao-seededit-3-0-i2i-250628';
+const SEEDREAM_45_MODEL = 'doubao-seedream-4-5-251128';
+
+const isSeedream3AutoPair = (model: string): boolean =>
+    model === SEEDREAM_30_T2I_MODEL || model === SEEDEDIT_30_I2I_MODEL;
+
+const resolveSeedream3ModelForInputs = (model: string, inputImages: string[]): string => {
+    if (!isSeedream3AutoPair(model)) return model;
+    return inputImages.length > 0 ? SEEDREAM_45_MODEL : SEEDREAM_30_T2I_MODEL;
+};
+
 // 图像生成 (通过 API route)
 const generateImageFromText = async (
     prompt: string,
@@ -75,7 +97,7 @@ const generateImageFromText = async (
 ): Promise<string[]> => {
     let resolvedImages = images;
     if (images.length > 0) {
-        const isSeedream = model.includes('seedream');
+        const isSeedream = isSeedreamFamilyModel(model);
         if (isSeedream) {
             console.log('[Studio Image] Preparing Seedream input images...');
             resolvedImages = await Promise.all(images.map(img => ensureSeedreamInputImage(img)));
@@ -224,25 +246,25 @@ import { synthesizeSpeech, MinimaxGenerateParams } from '@/services/minimaxServi
 import { saveToStorage, loadFromStorage, saveSubjects, loadSubjects, loadMultipleFromStorage, markMigrationComplete } from '@/services/storage';
 import { getScopedKey, setStorageUserId } from '@/services/storageScope';
 import { loadTaskLogs, replaceTaskLogs, onTaskLogUpdate } from '@/services/taskLogService';
-import { type StudioSyncData } from '@/services/studioSyncTypes';
+import AuthRequiredNotice from '@/components/common/AuthRequiredNotice';
+import { type StudioSyncData } from '@/services/studioSyncService';
 import { fetchStudioSyncFromCos, pushStudioSyncToCos, pushStudioSyncBeacon } from '@/services/studioSyncCosService';
 import { getCache, setCache, resolveCanvasFromCache } from '@/services/studioCache';
+import { isInitialSyncComplete } from '@/components/StudioSyncProvider';
 import { connectionKey } from '@/services/syncMergeUtils';
+import { analyzeViduReferenceImages, MAX_VIDU_REFERENCE_IMAGES } from '@/services/viduReferencePreview';
 import { getMenuStructure } from '@/config/models';
 import {
     Plus, Copy, Trash2, Type, Image as ImageIcon, Video as VideoIcon,
     MousePointerClick, LayoutTemplate, X, RefreshCw, Film, Brush, Mic2, Music, FileSearch,
     Minus, FolderHeart, Unplug, Sparkles, ChevronLeft, ChevronRight, Scan,
-    Undo2, Redo2, Speech, Camera, Loader2, MessageSquare
+    Undo2, Redo2, Speech, Camera, Loader2, MessageSquare, Layers
 } from 'lucide-react';
 
 // Apple Physics Curve
 const SPRING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const SNAP_THRESHOLD = 8; // Pixels for magnetic snap
 const COLLISION_PADDING = 24; // Spacing when nodes bounce off each other
-
-// Lite mode: keep canvas fully local and disable auth-gated cloud sync hooks.
-const isInitialSyncComplete = () => false;
 
 // ============================================================================
 // Node Config Persistence - 记住用户上次使用的节点配置
@@ -265,7 +287,7 @@ const REMEMBERED_FIELDS: Record<string, string[]> = {
     [NodeType.VIDEO_FACTORY]: ['model', 'aspectRatio', 'resolution', 'duration', 'videoConfig', 'generationMode', 'videoModeOverride'],
     [NodeType.MULTI_FRAME_VIDEO]: ['aspectRatio', 'multiFrameData'],
     [NodeType.AUDIO_GENERATOR]: ['model', 'audioMode', 'musicConfig', 'voiceConfig'],
-    [NodeType.PROMPT_INPUT]: ['model'],
+    [NodeType.PROMPT_INPUT]: [],
 };
 
 const getNodeConfigStorageKey = () => getScopedKey(NODE_CONFIG_STORAGE_KEY);
@@ -407,22 +429,14 @@ const getAspectRatioLabel = (width: number, height: number, isVideo = false) => 
 
 // Expanded View Component (Modal)
 const ExpandedView = ({ media, onClose }: { media: any, onClose: () => void }) => {
-    const [visible, setVisible] = useState(false);
     const [currentIndex, setCurrentIndex] = useState(0);
 
     useEffect(() => {
-        if (media) {
-            requestAnimationFrame(() => setVisible(true));
-            setCurrentIndex(media.initialIndex || 0);
-        } else {
-            setVisible(false);
-        }
+        if (!media) return;
+        setCurrentIndex(media.initialIndex || 0);
     }, [media]);
 
-    const handleClose = useCallback(() => {
-        setVisible(false);
-        setTimeout(onClose, 400);
-    }, [onClose]);
+    const handleClose = useCallback(() => onClose(), [onClose]);
 
     const hasMultiple = media?.images && media.images.length > 1;
 
@@ -441,7 +455,7 @@ const ExpandedView = ({ media, onClose }: { media: any, onClose: () => void }) =
     }, [hasMultiple, media]);
 
     useEffect(() => {
-        if (!visible) return;
+        if (!media) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') handleClose();
             if (e.key === 'ArrowRight') handleNext();
@@ -449,7 +463,7 @@ const ExpandedView = ({ media, onClose }: { media: any, onClose: () => void }) =
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [visible, handleClose, handleNext, handlePrev]);
+    }, [media, handleClose, handleNext, handlePrev]);
 
     if (!media) return null;
 
@@ -458,8 +472,8 @@ const ExpandedView = ({ media, onClose }: { media: any, onClose: () => void }) =
     const isVideo = (media.type === 'video') && !(currentSrc && currentSrc.startsWith('data:image'));
 
     return (
-        <div className={`fixed inset-0 z-[100] flex items-center justify-center transition-all duration-500 ease-[${SPRING}] ${visible ? 'bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl' : 'bg-transparent pointer-events-none opacity-0'}`} onClick={handleClose}>
-            <div className={`relative w-full h-full flex items-center justify-center p-8 transition-all duration-500 ease-[${SPRING}] ${visible ? 'scale-100 opacity-100' : 'scale-90 opacity-0'}`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/95 dark:bg-slate-950/95" onClick={handleClose}>
+            <div className="relative w-full h-full flex items-center justify-center p-8" onClick={e => e.stopPropagation()}>
 
                 {hasMultiple && (
                     <button
@@ -475,14 +489,14 @@ const ExpandedView = ({ media, onClose }: { media: any, onClose: () => void }) =
                         <img
                             key={currentSrc}
                             src={currentSrc}
-                            className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-in fade-in duration-300 bg-white dark:bg-slate-900"
+                            className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-white dark:bg-slate-900"
                             draggable={false}
                         />
                     ) : (
                         <video
                             key={currentSrc}
                             src={currentSrc}
-                            className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-in fade-in duration-300 bg-white dark:bg-slate-900"
+                            className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-white dark:bg-slate-900"
                             controls
                             autoPlay
                             muted
@@ -591,35 +605,11 @@ export default function StudioTab() {
         connections, setConnections: setConnectionsRaw, connectionsRef,
         groups, setGroups: setGroupsRaw, groupsRef,
         loadData,
-        addNode: addNodeFromHook,
-        updateNode: updateNodeFromHook,
-        updateNodeData: updateNodeDataFromHook,
-        updateNodeStatus: updateNodeStatusFromHook,
-        deleteNode: deleteNodeFromHook,
-        getNode: getNodeFromHook,
-        getNodes: getNodesFromHook,
-        addConnection: addConnectionFromHook,
-        deleteConnection: deleteConnectionFromHook,
-        getConnections: getConnectionsFromHook,
     } = useCanvasData(mountCache ? {
         nodes: structuredClone(mountCache.canvasNodes),
         connections: structuredClone(mountCache.canvasConnections),
         groups: structuredClone(mountCache.canvasGroups),
     } : undefined);
-
-    // Register Canvas API
-    useCanvasAPIRegistration(useMemo(() => ({
-        addNode: addNodeFromHook,
-        updateNode: updateNodeFromHook,
-        updateNodeData: updateNodeDataFromHook,
-        updateNodeStatus: updateNodeStatusFromHook,
-        deleteNode: deleteNodeFromHook,
-        getNode: getNodeFromHook,
-        getNodes: getNodesFromHook,
-        addConnection: addConnectionFromHook,
-        deleteConnection: deleteConnectionFromHook,
-        getConnections: getConnectionsFromHook,
-    }), [addNodeFromHook, updateNodeFromHook, updateNodeDataFromHook, updateNodeStatusFromHook, deleteNodeFromHook, getNodeFromHook, getNodesFromHook, addConnectionFromHook, deleteConnectionFromHook, getConnectionsFromHook]));
 
     // History Hook - 撤销/重做
     const {
@@ -797,6 +787,9 @@ export default function StudioTab() {
 
     // Settings State
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+    const [userModalTab, setUserModalTab] = useState<'account' | 'credits'>('account');
+    const [isLoginOpen, setIsLoginOpen] = useState(false);
 
     // Canvas Management State
     const [canvases, setCanvasesInternal] = useState<Canvas[]>(() => mountCache?.cache.canvases || []);
@@ -837,6 +830,26 @@ export default function StudioTab() {
     const [subjectEditorInitialImage, setSubjectEditorInitialImage] = useState<string | null>(null);
     const [isSubjectEditorOpen, setIsSubjectEditorOpen] = useState(false);
     const [externalOpenPanel, setExternalOpenPanel] = useState<'subjects' | null>(null);
+
+    const canvasImageSources = useMemo(() => {
+        const imageSources: string[] = [];
+
+        nodes.forEach((node) => {
+            if (node.data.image) imageSources.push(node.data.image);
+            if (Array.isArray(node.data.images)) imageSources.push(...node.data.images);
+            if (node.data.firstLastFrameData?.firstFrame) imageSources.push(node.data.firstLastFrameData.firstFrame);
+            if (node.data.firstLastFrameData?.lastFrame) imageSources.push(node.data.firstLastFrameData.lastFrame);
+            if (node.data.selectedFrame) imageSources.push(node.data.selectedFrame);
+            if (node.data.croppedFrame) imageSources.push(node.data.croppedFrame);
+            if (Array.isArray(node.data.multiFrameData?.frames)) {
+                node.data.multiFrameData.frames.forEach((frame) => {
+                    if (frame.src) imageSources.push(frame.src);
+                });
+            }
+        });
+
+        return uniqueNonEmptyImageSources(imageSources);
+    }, [nodes]);
 
     const [deletedItemsState, setDeletedItemsState] = useState<Record<string, number>>(() => mountCache?.cache.deletedItems || {});
     const deletedItemsRef = useRef<Record<string, number>>(mountCache?.cache.deletedItems || {});
@@ -888,14 +901,22 @@ export default function StudioTab() {
 
     // Media Overlays
     const [expandedMedia, setExpandedMedia] = useState<any>(null);
-    const [editingImage, setEditingImage] = useState<{ nodeId: string; src: string; originalImage?: string; canvasData?: string } | null>(null);
+    const [imageModal, setImageModal] = useState<{
+        nodeId: string;
+        src: string;
+        images?: string[];
+        initialIndex?: number;
+        originalImage?: string;
+        editOriginImage?: string;
+        canvasData?: string;
+        initialMode?: 'preview' | 'edit';
+    } | null>(null);
     const [croppingNodeId, setCroppingNodeId] = useState<string | null>(null);
     const [imageToCrop, setImageToCrop] = useState<string | null>(null);
     const [videoToCrop, setVideoToCrop] = useState<string | null>(null); // 视频帧选择源
-    const isAuthenticated = false;
-    const authLoading = false;
+    const { isAuthenticated, isLoading: authLoading, user } = useAuth();
     const router = useRouter();
-    const userId: string | undefined = undefined;
+    const userId = user?.id;
 
     useEffect(() => {
         // Ensure all scoped storage reads/writes use the same user context.
@@ -949,6 +970,7 @@ export default function StudioTab() {
     const initialSyncDoneRef = useRef(false);
     const skipInitialPersistRef = useRef(true);
     const localSnapshotUpdatedAtRef = useRef(0);
+    const nodeActionLocksRef = useRef<Set<string>>(new Set());
 
     const setNodes: React.Dispatch<React.SetStateAction<AppNode[]>> = useCallback((value) => {
         if (!remoteApplyInProgressRef.current) {
@@ -1329,7 +1351,7 @@ export default function StudioTab() {
         if (exitInFlightRef.current) return;
         exitInFlightRef.current = true;
         // 立即导航，零延迟
-        router.push('/canvas');
+        router.push('/canvases');
         // 后台静默同步（sendBeacon，不阻塞导航）
         if (isAuthenticated && userId) {
             pushLocalSync({ keepalive: true });
@@ -2001,8 +2023,9 @@ export default function StudioTab() {
         if (node.type === NodeType.IMAGE_EDITOR) return 360;
         if (node.type === NodeType.AUDIO_GENERATOR) return Math.round(width * 9 / 16); // 16:9 比例
         if (node.type === NodeType.IMAGE_3D_CAMERA) return 380; // 3D 运镜节点固定高度
-        // 提示词节点和素材节点默认 16:9 比例
-        const defaultRatio = (node.type === NodeType.PROMPT_INPUT || node.type === NodeType.IMAGE_ASSET || node.type === NodeType.VIDEO_ASSET) ? '16:9' : '1:1';
+        // 文本节点默认 9:16，素材节点默认 16:9
+        const defaultRatio = node.type === NodeType.PROMPT_INPUT ? '9:16'
+            : (node.type === NodeType.IMAGE_ASSET || node.type === NodeType.VIDEO_ASSET) ? '16:9' : '1:1';
         const [w, h] = (node.data.aspectRatio || defaultRatio).split(':').map(Number);
         return (width * h / w);
     };
@@ -2353,7 +2376,7 @@ export default function StudioTab() {
 
     const getNodeNameCN = (t: string) => {
         switch (t) {
-            case NodeType.PROMPT_INPUT: return '提示词';
+            case NodeType.PROMPT_INPUT: return '文本';
             case NodeType.IMAGE_ASSET: return '插入图片';
             case NodeType.VIDEO_ASSET: return '插入视频';
             case NodeType.IMAGE_GENERATOR: return '图片生成';
@@ -2592,7 +2615,7 @@ export default function StudioTab() {
         };
 
         const typeMap: Record<string, string> = {
-            [NodeType.PROMPT_INPUT]: '提示词',
+            [NodeType.PROMPT_INPUT]: '文本',
             [NodeType.IMAGE_ASSET]: '插入图片',
             [NodeType.VIDEO_ASSET]: '插入视频',
             [NodeType.IMAGE_GENERATOR]: '图片生成',
@@ -2613,7 +2636,7 @@ export default function StudioTab() {
         const nodeWidth = 420;
         const [rw, rh] = (defaults.aspectRatio || '16:9').split(':').map(Number);
         const nodeHeight = type === NodeType.AUDIO_GENERATOR || type === NodeType.VOICE_GENERATOR ? Math.round(nodeWidth * 9 / 16) : // 16:9 比例
-            type === NodeType.PROMPT_INPUT ? Math.round(nodeWidth * 9 / 16) : // 16:9 比例
+            type === NodeType.PROMPT_INPUT ? Math.round(nodeWidth * 16 / 9) : // 9:16 比例
                 type === NodeType.MULTI_FRAME_VIDEO ? Math.round(nodeWidth * 9 / 16) : // 16:9 比例
                     (nodeWidth * rh / rw);
 
@@ -2875,8 +2898,8 @@ export default function StudioTab() {
 
     const handleWheel = useCallback((e: WheelEvent) => {
         const target = e.target as HTMLElement | null;
-        if (target?.closest('[data-chat-panel]')) {
-            // 鼠标悬停在对话框时，优先滚动对话框，不触发画布缩放/平移
+        if (target?.closest('[data-chat-panel], [data-config-panel], textarea, input, select, [contenteditable="true"]')) {
+            // 鼠标悬停在输入/面板区域时，优先滚动该区域，不触发画布缩放/平移
             return;
         }
         e.preventDefault();
@@ -3606,8 +3629,21 @@ export default function StudioTab() {
         setNodes(prev => {
             const newNodes = prev.map(n => {
                 if (n.id === id) {
+                    const hasExplicitErrorField = !!data
+                        && typeof data === 'object'
+                        && Object.prototype.hasOwnProperty.call(data, 'error');
                     // 深度合并 firstLastFrameData（避免快速连续上传时丢失数据）
                     const mergedData = { ...n.data, ...data };
+                    const hasSuccessfulMediaUpdate =
+                        (typeof data?.image === 'string' && data.image.length > 0) ||
+                        (typeof data?.videoUri === 'string' && data.videoUri.length > 0) ||
+                        (typeof data?.audioUri === 'string' && data.audioUri.length > 0) ||
+                        (Array.isArray(data?.images) && data.images.some((item: unknown) => typeof item === 'string' && item.length > 0)) ||
+                        (Array.isArray(data?.videoUris) && data.videoUris.some((item: unknown) => typeof item === 'string' && item.length > 0)) ||
+                        (Array.isArray(data?.audioUris) && data.audioUris.some((item: unknown) => typeof item === 'string' && item.length > 0));
+                    if (!hasExplicitErrorField && hasSuccessfulMediaUpdate) {
+                        mergedData.error = undefined;
+                    }
                     if ((data?.image || data?.videoUri) && data?.mediaOrigin === undefined) {
                         mergedData.mediaOrigin = 'generated';
                     }
@@ -3618,6 +3654,10 @@ export default function StudioTab() {
                         };
                     }
                     const updated = { ...n, data: mergedData, title: title || n.title, modifiedAt: Date.now() };
+                    // 清除错误时自动恢复节点状态
+                    if (hasExplicitErrorField && data.error === undefined && n.status === NodeStatus.ERROR) {
+                        updated.status = NodeStatus.IDLE;
+                    }
                     if (size) { if (size.width) updated.width = size.width; if (size.height) updated.height = size.height; }
 
                     if (data.image) handleAssetGenerated('image', data.image, updated.title);
@@ -3651,6 +3691,71 @@ export default function StudioTab() {
         // 移除了自动推送，只在离开时推送
     }, [autoFitNodeToMedia, handleAssetGenerated]);
 
+    const editedDataUrlMigrationDoneRef = useRef(false);
+    useEffect(() => {
+        if (!isLoaded) return;
+        if (editedDataUrlMigrationDoneRef.current) return;
+
+        editedDataUrlMigrationDoneRef.current = true;
+        let cancelled = false;
+        const isDataUrl = (value: unknown): value is string => typeof value === 'string' && value.startsWith('data:');
+        const uploadIfDataUrl = async (value?: string) => {
+            if (!isDataUrl(value)) return value;
+            return uploadImageDataUrl(value);
+        };
+
+        const migrateEditedDataUrls = async () => {
+            const snapshot = [...nodesRef.current];
+            for (const node of snapshot) {
+                if (cancelled) return;
+                const data = node.data || {};
+                const hasDataUrl =
+                    isDataUrl(data.image) ||
+                    isDataUrl(data.originalImage) ||
+                    isDataUrl(data.editOriginImage) ||
+                    isDataUrl(data.canvasData) ||
+                    (Array.isArray(data.images) && data.images.some((img) => isDataUrl(img)));
+
+                if (!hasDataUrl) continue;
+
+                try {
+                    handleNodeUpdate(node.id, { uploading: true });
+
+                    const [image, originalImage, editOriginImage, canvasData] = await Promise.all([
+                        uploadIfDataUrl(data.image),
+                        uploadIfDataUrl(data.originalImage),
+                        uploadIfDataUrl(data.editOriginImage),
+                        uploadIfDataUrl(data.canvasData),
+                    ]);
+
+                    const images = Array.isArray(data.images)
+                        ? await Promise.all(
+                            data.images.map((img) => uploadIfDataUrl(img))
+                        )
+                        : data.images;
+
+                    if (cancelled) return;
+                    handleNodeUpdate(node.id, {
+                        image,
+                        images,
+                        originalImage,
+                        editOriginImage,
+                        canvasData,
+                        uploading: false,
+                    });
+                } catch (error) {
+                    console.warn('[Studio Sync] Data URL migration failed:', error);
+                    handleNodeUpdate(node.id, { uploading: false });
+                }
+            }
+        };
+
+        migrateEditedDataUrls();
+        return () => {
+            cancelled = true;
+        };
+    }, [isLoaded, handleNodeUpdate, uploadImageDataUrl]);
+
     const reconcileNodesWithTaskLogs = useCallback(() => {
         const logs = loadTaskLogs();
         if (!logs || logs.length === 0) return;
@@ -3659,7 +3764,6 @@ export default function StudioTab() {
 
         for (const log of logs) {
             if (log.type !== 'video') continue;
-            if (log.status !== 'success' && log.status !== 'failed') continue;
 
             let targetNodeId = log.nodeId;
             if (!targetNodeId && log.externalId) {
@@ -3671,7 +3775,11 @@ export default function StudioTab() {
             if (!targetNodeId) continue;
 
             const existing = latestByNode.get(targetNodeId);
-            if (!existing || (log.createdAt || 0) > (existing.createdAt || 0)) {
+            const logUpdatedAt = Math.max(log.createdAt || 0, log.startedAt || 0, log.completedAt || 0);
+            const existingUpdatedAt = existing
+                ? Math.max(existing.createdAt || 0, existing.startedAt || 0, existing.completedAt || 0)
+                : -1;
+            if (!existing || logUpdatedAt > existingUpdatedAt) {
                 latestByNode.set(targetNodeId, log);
             }
         }
@@ -3681,6 +3789,11 @@ export default function StudioTab() {
         latestByNode.forEach((log, nodeId) => {
             const node = nodesRef.current.find(n => n.id === nodeId);
             if (!node) return;
+            const logUpdatedAt = Math.max(log.createdAt || 0, log.startedAt || 0, log.completedAt || 0);
+            if (node.status === NodeStatus.WORKING && logUpdatedAt <= (node.modifiedAt || 0)) {
+                // 节点重新开始生成后，忽略更旧的历史日志，避免回退到过期终态。
+                return;
+            }
 
             if (log.status === 'success') {
                 const videoUrl = log.outputUrls?.videos?.[0];
@@ -3704,6 +3817,9 @@ export default function StudioTab() {
                 setNodes(prev => prev.map(n =>
                     n.id === nodeId ? { ...n, status: NodeStatus.ERROR, modifiedAt: Date.now() } : n
                 ));
+            } else {
+                // 最新日志仍在运行/排队/已取消时，不覆盖节点终态。
+                return;
             }
         });
     }, [handleNodeUpdate]);
@@ -3745,11 +3861,22 @@ export default function StudioTab() {
     };
 
     const handleNodeAction = useCallback(async (id: string, promptOverride?: string) => {
-        const node = nodesRef.current.find(n => n.id === id); if (!node) return;
-        handleNodeUpdate(id, { error: undefined });
-        setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING, modifiedAt: Date.now() } : n));
+        const runningActions = nodeActionLocksRef.current;
+        if (runningActions.has(id)) {
+            console.warn(`[NodeAction] Skip duplicate trigger for node ${id}`);
+            return;
+        }
+
+        const node = nodesRef.current.find(n => n.id === id);
+        if (!node) return;
+        if (node.status === NodeStatus.WORKING) return;
+
+        runningActions.add(id);
 
         try {
+            handleNodeUpdate(id, { error: undefined });
+            setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.WORKING, modifiedAt: Date.now() } : n));
+
             const inputs = node.inputs.map(i => nodesRef.current.find(n => n.id === i)).filter(Boolean) as AppNode[];
             const latestSubjects = subjectsRef.current;
 
@@ -3764,72 +3891,9 @@ export default function StudioTab() {
                 prompt = prompt ? `${combinedUpstream}\n${prompt}` : combinedUpstream;
             }
 
-            // 创意描述节点：统一使用 /api/studio/chat 处理文本/图片/视频分析
+            // 文本节点：纯文本载体，不执行 AI 操作
             if (node.type === NodeType.PROMPT_INPUT) {
-                const requestPrompt = promptOverride || ''; // 需求（来自配置框）
-                const contentPrompt = node.data.prompt || ''; // 内容（节点内文本）
-                const selectedModel = node.data.model || 'gemini-2.5-flash';
-
-                // 检查上游是否有媒体素材
-                let upstreamImage = inputs.find(n => n?.data.image)?.data.image;
-                let upstreamVideo = inputs.find(n => n?.data.videoUri)?.data.videoUri;
-
-                try {
-                    let generatedPrompt = '';
-
-                    // 将 blob URL 转换为 base64（远程 API 无法访问 blob URL）
-                    if (upstreamImage && upstreamImage.startsWith('blob:')) {
-                        upstreamImage = await urlToBase64(upstreamImage);
-                    }
-                    if (upstreamVideo && upstreamVideo.startsWith('blob:')) {
-                        upstreamVideo = await urlToBase64(upstreamVideo);
-                    }
-
-                    // 统一使用 /api/studio/chat 处理文本/图片/视频
-                    let userMessage = '';
-                    if (contentPrompt.trim() && requestPrompt.trim()) {
-                        userMessage = `需求：${requestPrompt}\n\n原内容：${contentPrompt}`;
-                    } else if (contentPrompt.trim()) {
-                        userMessage = contentPrompt;
-                    } else if (requestPrompt.trim()) {
-                        userMessage = requestPrompt;
-                    } else if (upstreamVideo) {
-                        userMessage = '请详细描述这个视频的内容、风格、运动、镜头语言等视觉元素，生成可用于视频生成的提示词。';
-                    } else if (upstreamImage) {
-                        userMessage = '请详细描述这张图片的内容、风格、构图、色彩等视觉元素，生成可用于AI图片/视频生成的提示词。';
-                    } else {
-                        throw new Error('请输入内容或连接素材');
-                    }
-
-                    const response = await fetch('/api/studio/chat', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            messages: [{ role: 'user', text: userMessage }],
-                            mode: 'prompt_generator',
-                            model: selectedModel,
-                            image: upstreamImage || undefined,
-                            video: upstreamVideo || undefined
-                        })
-                    });
-
-                    if (!response.ok) {
-                        const error = await response.json().catch(() => ({}));
-                        throw new Error(error.error || `API错误: ${response.status}`);
-                    }
-
-                    const result = await response.json();
-                    generatedPrompt = result.message || '';
-
-                    handleNodeUpdate(id, { prompt: generatedPrompt });
-                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.SUCCESS, modifiedAt: Date.now() } : n));
-                    return;
-                } catch (e: any) {
-                    console.error('[PROMPT_INPUT] Error:', e);
-                    handleNodeUpdate(id, { error: e.message });
-                    setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR, modifiedAt: Date.now() } : n));
-                    return;
-                }
+                return;
             }
 
             if (node.type === NodeType.IMAGE_GENERATOR) {
@@ -3845,27 +3909,35 @@ export default function StudioTab() {
                     const imageCount = node.data.imageCount || 1;
                     // 验证模型是否为图片生成模型
                     let usedModel = node.data.model || 'doubao-seedream-5-0-260128';
-                    const isValidImageModel = usedModel.includes('seedream') || usedModel.includes('nano-banana') || usedModel.includes('gemini');
+                    const isValidImageModel = isSeedreamFamilyModel(usedModel) || usedModel.includes('nano-banana') || usedModel.includes('gemini');
                     if (!isValidImageModel) {
                         console.warn(`[ImageGen] Invalid model ${usedModel} for image generation, falling back to Seedream`);
                         usedModel = 'doubao-seedream-5-0-260128';
                     }
+                    const autoResolvedModel = resolveSeedream3ModelForInputs(usedModel, inputImages);
+                    if (autoResolvedModel !== usedModel) {
+                        console.log(`[ImageGen] Auto switched Seedream 3.0 model: ${usedModel} -> ${autoResolvedModel}`);
+                        usedModel = autoResolvedModel;
+                    }
                     const imageModelConfig = getImageModelConfig(usedModel);
                     const usedAspectRatio = node.data.aspectRatio || imageModelConfig.defaultAspectRatio || '16:9';
-                    const res = await generateImageFromText(prompt, usedModel, inputImages, { aspectRatio: usedAspectRatio, resolution: node.data.resolution, count: imageCount });
+                    const cleanedPrompt = cleanSubjectReferences(prompt, latestSubjects);
+                    const res = await generateImageFromText(cleanedPrompt, usedModel, inputImages, { aspectRatio: usedAspectRatio, resolution: node.data.resolution, count: imageCount });
 
-                    // 始终覆盖当前节点结果（不再自动创建右侧分支节点）
-                    handleNodeUpdate(id, { image: res[0], images: res, imageCount, model: usedModel, aspectRatio: usedAspectRatio });
+                    // 重新生成时追加到已有组图（而非替换），复用组图展示 UI
+                    const existingImages = node.data.images || [];
+                    const mergedImages = [...existingImages, ...res];
+                    handleNodeUpdate(id, { image: res[0], images: mergedImages, imageCount, model: usedModel, aspectRatio: usedAspectRatio });
 
                     // 记录图像生成消耗
-                    const imageProvider = usedModel.includes('seedream') ? 'seedream' : 'nano-banana';
+                    const imageProvider = isSeedreamFamilyModel(usedModel) ? 'seedream' : 'nano-banana';
                     recordImageConsumption({
                         provider: imageProvider,
                         model: usedModel,
                         imageCount: res.length,
                         resolution: node.data.resolution,
-                        prompt: prompt.slice(0, 100),
-                    }).catch(err => console.warn('[Image] Failed to record consumption:', err));
+                            prompt: cleanedPrompt.slice(0, 100),
+                        }).catch(err => console.warn('[Image] Failed to record consumption:', err));
                 } catch (imgErr: any) {
                     throw imgErr; // 抛给外层 catch 处理
                 }
@@ -3879,13 +3951,14 @@ export default function StudioTab() {
                     const usedModel = node.data.model || 'veo3.1';
                     const usedAspectRatio = node.data.aspectRatio || '16:9';
                     const isViduModel = usedModel.startsWith('vidu');
+                    const isStoryContinueMode = node.data.generationMode === 'CONTINUE' || node.data.generationMode === 'CUT';
                     const selectedSubjects = node.data.selectedSubjects || [];
 
                     // 主体能力仅在 Vidu 模型下启用
                     let processedPrompt = prompt;
                     let viduSubjects: { id: string; images: string[] }[] | undefined;
 
-                    if (isViduModel) {
+                    if (isViduModel && !isStoryContinueMode) {
                         const subjectRefs = parseSubjectReferences(prompt, latestSubjects);
                         if (subjectRefs.length > 0) {
                             console.log(`[VideoGen] Found ${subjectRefs.length} subject references for Vidu:`, subjectRefs.map(s => s.name));
@@ -3924,6 +3997,16 @@ export default function StudioTab() {
                     if (useViduSubjectMode && viduSubjects) {
                         console.log(`[VideoGen] Using Vidu subject reference mode with upstream assets enabled`);
                         console.log(`[VideoGen] viduSubjects:`, JSON.stringify(viduSubjects.map(s => ({ id: s.id, imageCount: s.images.length }))));
+                        const upstreamReferenceImages = (strategy.referenceImages && strategy.referenceImages.length > 0)
+                            ? strategy.referenceImages
+                            : (strategy.inputImageForGeneration ? [strategy.inputImageForGeneration] : []);
+                        const usage = analyzeViduReferenceImages(
+                            upstreamReferenceImages.filter(Boolean),
+                            viduSubjects.map((s) => ({ subjectId: s.id, imageUrls: (s.images || []).filter(Boolean) }))
+                        );
+                        if (usage.totalUniqueImages > MAX_VIDU_REFERENCE_IMAGES) {
+                            throw new Error(`参考图超过 ${MAX_VIDU_REFERENCE_IMAGES} 张上限（当前 ${usage.totalUniqueImages} 张），请减少上游参考图或 @主体 后重试`);
+                        }
                     }
 
                     // 确定目标节点 ID（新节点或当前节点）
@@ -3973,7 +4056,11 @@ export default function StudioTab() {
                                 error: "Region restricted: Generated preview image instead."
                             });
                         } else {
-                            handleNodeUpdate(id, { videoUri: res.uri, videoMetadata: res.videoMetadata, videoUris: res.uris, model: usedModel, aspectRatio: usedAspectRatio });
+                            // 重新生成时追加到已有组图（而非替换），复用组图展示 UI
+                            const existingUris = node.data.videoUris || [];
+                            const newUris = res.uris || [res.uri];
+                            const mergedUris = [...existingUris, ...newUris];
+                            handleNodeUpdate(id, { videoUri: res.uri, videoMetadata: res.videoMetadata, videoUris: mergedUris, model: usedModel, aspectRatio: usedAspectRatio });
                         }
                     }
 
@@ -4015,13 +4102,14 @@ export default function StudioTab() {
                     const usedModel = node.data.model || 'veo3.1';
                     const usedAspectRatio = node.data.aspectRatio || '16:9';
                     const isViduModel = usedModel.startsWith('vidu');
+                    const isStoryContinueMode = node.data.generationMode === 'CONTINUE' || node.data.generationMode === 'CUT';
                     const selectedSubjects = node.data.selectedSubjects || [];
 
                     // 主体能力仅在 Vidu 模型下启用
                     let processedPrompt = prompt;
                     let viduSubjects: { id: string; images: string[] }[] | undefined;
 
-                    if (isViduModel) {
+                    if (isViduModel && !isStoryContinueMode) {
                         const subjectRefs = parseSubjectReferences(prompt, latestSubjects);
                         if (subjectRefs.length > 0) {
                             console.log(`[VideoFactory] Found ${subjectRefs.length} subject references for Vidu:`, subjectRefs.map(s => s.name));
@@ -4053,6 +4141,19 @@ export default function StudioTab() {
                     const finalPrompt = useViduSubjectMode
                         ? ensureViduSubjectMentions(strategy.finalPrompt, (viduSubjects || []).map(s => s.id))
                         : strategy.finalPrompt;
+
+                    if (useViduSubjectMode && viduSubjects) {
+                        const upstreamReferenceImages = (strategy.referenceImages && strategy.referenceImages.length > 0)
+                            ? strategy.referenceImages
+                            : (strategy.inputImageForGeneration ? [strategy.inputImageForGeneration] : []);
+                        const usage = analyzeViduReferenceImages(
+                            upstreamReferenceImages.filter(Boolean),
+                            viduSubjects.map((s) => ({ subjectId: s.id, imageUrls: (s.images || []).filter(Boolean) }))
+                        );
+                        if (usage.totalUniqueImages > MAX_VIDU_REFERENCE_IMAGES) {
+                            throw new Error(`参考图超过 ${MAX_VIDU_REFERENCE_IMAGES} 张上限（当前 ${usage.totalUniqueImages} 张），请减少上游参考图或 @主体 后重试`);
+                        }
+                    }
 
                     // 确定目标节点 ID（新节点或当前节点）
                     const targetNodeId = shouldCreateNewNode && newFactoryNodeId ? newFactoryNodeId : id;
@@ -4101,7 +4202,11 @@ export default function StudioTab() {
                                 error: "Region restricted: Generated preview image instead."
                             });
                         } else {
-                            handleNodeUpdate(id, { videoUri: res.uri, videoMetadata: res.videoMetadata, videoUris: res.uris, model: usedModel, aspectRatio: usedAspectRatio });
+                            // 重新生成时追加到已有组图（而非替换），复用组图展示 UI
+                            const existingUris = node.data.videoUris || [];
+                            const newUris = res.uris || [res.uri];
+                            const mergedUris = [...existingUris, ...newUris];
+                            handleNodeUpdate(id, { videoUri: res.uri, videoMetadata: res.videoMetadata, videoUris: mergedUris, model: usedModel, aspectRatio: usedAspectRatio });
                         }
                     }
 
@@ -4290,6 +4395,7 @@ export default function StudioTab() {
 
                 // 异步调用 fal.ai 3D 运镜 API（前端轮询模式，避免 Cloudflare 504）
                 (async () => {
+                    let hasSuccessfulImage = false;
                     try {
                         // 1. 提交任务（快速返回 task_id）
                         const submitRes = await fetch('/api/studio/camera3d', {
@@ -4311,48 +4417,64 @@ export default function StudioTab() {
                         const { taskId } = await submitRes.json();
                         if (!taskId) throw new Error('未返回任务ID');
 
-                        // 2. 前端轮询任务状态
+                        // 2. 前端轮询任务状态 + COS 转存
+                        // 任务完成后服务端自动触发后台 COS 转存（海外→国内）
+                        // 前端继续短轮询直到 cosReady，确保最终图片走国内 CDN
                         const POLL_INTERVAL = 4000;
+                        const COS_POLL_INTERVAL = 2000;
                         const MAX_POLLS = 45; // 最多 3 分钟
+                        let taskDone = false;
+                        let latestImageUrl: string | null = null;
                         for (let i = 0; i < MAX_POLLS; i++) {
-                            await new Promise(r => setTimeout(r, POLL_INTERVAL));
+                            await new Promise(r => setTimeout(r, taskDone ? COS_POLL_INTERVAL : POLL_INTERVAL));
 
                             const pollRes = await fetch(`/api/studio/camera3d?taskId=${taskId}`);
                             if (!pollRes.ok) {
                                 const errData = await pollRes.json().catch(() => ({}));
-                                throw new Error(errData.error || `查询失败: ${pollRes.status}`);
+                                const errorMessage = errData.error || `查询失败: ${pollRes.status}`;
+                                if (hasSuccessfulImage) {
+                                    console.warn(`[Camera3D] Poll non-OK after success, keep success state: ${errorMessage}`);
+                                    continue;
+                                }
+                                throw new Error(errorMessage);
                             }
 
                             const pollData = await pollRes.json();
 
                             if (pollData.status === 'success' && pollData.image) {
-                                // 先用原始 URL 显示结果
-                                let finalImage = pollData.image;
+                                hasSuccessfulImage = true;
+                                latestImageUrl = pollData.image;
+                                // 更新图片（首次为原始海外 URL，cosReady 后为国内 COS URL）
                                 setNodes(prev => prev.map(n => n.id === newNodeId ? {
                                     ...n,
                                     status: NodeStatus.SUCCESS,
-                                    data: { ...n.data, image: finalImage, images: [finalImage] },
+                                    data: {
+                                        ...n.data,
+                                        image: pollData.image,
+                                        images: [pollData.image],
+                                        error: undefined,
+                                        progress: undefined,
+                                    },
                                     modifiedAt: Date.now(),
                                 } : n));
-                                // 异步转存到 COS（不阻塞 UI）
-                                try {
-                                    const { smartUpload, buildMediaPath } = await import('@/services/cosStorage');
-                                    const cosUrl = await smartUpload(finalImage, { prefix: buildMediaPath('images') });
-                                    if (cosUrl && cosUrl !== finalImage) {
-                                        setNodes(prev => prev.map(n => n.id === newNodeId ? {
-                                            ...n,
-                                            data: { ...n.data, image: cosUrl, images: [cosUrl] },
-                                            modifiedAt: Date.now(),
-                                        } : n));
-                                    }
-                                } catch (e) {
-                                    console.warn('[Camera3D] COS upload failed, using original URL', e);
+
+                                if (pollData.cosReady) {
+                                    // COS 转存完成，停止轮询
+                                    return;
                                 }
-                                return;
+
+                                // COS 还在转存中，继续轮询（用更短间隔）
+                                taskDone = true;
+                                continue;
                             }
 
                             if (pollData.status === 'failed') {
-                                throw new Error(pollData.error || '任务失败');
+                                const errorMessage = pollData.error || '任务失败';
+                                if (hasSuccessfulImage) {
+                                    console.warn(`[Camera3D] Received failed status after success, keep success state: ${errorMessage}`);
+                                    continue;
+                                }
+                                throw new Error(errorMessage);
                             }
 
                             // 更新进度提示
@@ -4365,8 +4487,30 @@ export default function StudioTab() {
                             }
                         }
 
+                        if (hasSuccessfulImage) {
+                            console.warn('[Camera3D] Timeout waiting for COS URL, preserving successful result');
+                            if (latestImageUrl) {
+                                setNodes(prev => prev.map(n => n.id === newNodeId ? {
+                                    ...n,
+                                    status: NodeStatus.SUCCESS,
+                                    data: {
+                                        ...n.data,
+                                        image: latestImageUrl,
+                                        images: [latestImageUrl],
+                                        error: undefined,
+                                    },
+                                    modifiedAt: Date.now(),
+                                } : n));
+                            }
+                            return;
+                        }
+
                         throw new Error('任务超时，请重试');
                     } catch (error: any) {
+                        if (hasSuccessfulImage) {
+                            console.warn('[Camera3D] Poll error happened after success, preserving successful result:', error?.message || error);
+                            return;
+                        }
                         setNodes(prev => prev.map(n => n.id === newNodeId ? {
                             ...n,
                             status: NodeStatus.ERROR,
@@ -4464,6 +4608,8 @@ export default function StudioTab() {
         } catch (e: any) {
             handleNodeUpdate(id, { error: e.message });
             setNodes(p => p.map(n => n.id === id ? { ...n, status: NodeStatus.ERROR, modifiedAt: Date.now() } : n));
+        } finally {
+            runningActions.delete(id);
         }
     }, [handleNodeUpdate]);
 
@@ -4619,6 +4765,12 @@ export default function StudioTab() {
             return;
         }
 
+        const now = Date.now();
+        setDeletedItems(prev => ({
+            ...prev,
+            [id]: Math.max(prev[id] || 0, now),
+        }));
+
         setCanvases(prev => {
             const newCanvases = prev.filter(c => c.id !== id);
             // 如果删除的是当前画布，切换到第一个
@@ -4707,8 +4859,11 @@ export default function StudioTab() {
     }, [subjects]);
 
     const handleDeleteSubject = useCallback((id: string) => {
-        setSubjects(prev => prev.filter(s => s.id !== id));
-    }, []);
+        const now = Date.now();
+        const next = removeItemWithTombstone(subjectsRef.current, deletedItemsRef.current, id, now);
+        setDeletedItems(next.deletedItems);
+        setSubjects(next.items);
+    }, [setDeletedItems, setSubjects]);
 
     const handleSaveSubject = useCallback((subject: Subject) => {
         setSubjects(prev => {
@@ -4725,6 +4880,7 @@ export default function StudioTab() {
         });
         setIsSubjectEditorOpen(false);
         setEditingSubject(null);
+        setSubjectEditorInitialImage(null);
     }, []);
 
     // 自动保存当前画布（节流）
@@ -4775,13 +4931,9 @@ export default function StudioTab() {
                 const lastSelected = selectedNodeIds[selectedNodeIds.length - 1];
                 if (lastSelected) {
                     const targetNode = nodesRef.current.find(n => n.id === lastSelected);
-                    if (targetNode && targetNode.status !== NodeStatus.WORKING) {
+                    if (targetNode && targetNode.status !== NodeStatus.WORKING && targetNode.type !== NodeType.PROMPT_INPUT) {
                         e.preventDefault();
-                        if (targetNode.type === NodeType.PROMPT_INPUT) {
-                            handleNodeAction(lastSelected, targetNode.data.userInput || '');
-                        } else {
-                            handleNodeAction(lastSelected);
-                        }
+                        handleNodeAction(lastSelected);
                     }
                 }
                 return;
@@ -5035,6 +5187,21 @@ export default function StudioTab() {
         };
     }, []);
 
+    useEffect(() => {
+        if (authLoading) return;
+        if (isAuthenticated) {
+            setIsLoginOpen(false);
+            return;
+        }
+        const seen = typeof window !== 'undefined' ? localStorage.getItem('login_modal_seen') : null;
+        if (!seen) {
+            setIsLoginOpen(true);
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('login_modal_seen', '1');
+            }
+        }
+    }, [authLoading, isAuthenticated]);
+
     return (
         <div className="w-full h-full overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-200" style={{ '--grid-color': '#cbd5e1', '--grid-color-dark': '#334155' } as React.CSSProperties}>
             {/* 全屏加载覆盖层 */}
@@ -5081,15 +5248,18 @@ export default function StudioTab() {
                 </div>
             )}
 
-            {/* Back to canvas home */}
+            {/* Back to Dashboard Canvas */}
             <Link
-                href="/canvas"
+                href="/canvases"
                 onClick={handleExitToDashboard}
                 className="absolute left-6 top-6 z-50 flex items-center gap-2 rounded-2xl border border-slate-300 bg-[#ffffff]/70 px-3 py-2 text-xs font-medium text-slate-600 shadow-2xl backdrop-blur-2xl transition-all duration-150 ease-out hover:bg-white/80 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-slate-100"
             >
                 <ChevronLeft size={16} />
-                返回画布
+                返回我的画布
             </Link>
+            <div className="absolute left-4 right-4 top-16 z-50">
+                <AuthRequiredNotice />
+            </div>
             <div
                 ref={canvasContainerRef}
                 data-canvas-container
@@ -5368,7 +5538,25 @@ export default function StudioTab() {
 
                     {nodes.map(node => (
                         <Node
-                            key={node.id} node={node} zoom={scale} onUpdate={handleNodeUpdate} onAction={handleNodeAction} onDelete={(id) => deleteNodes([id])} onExpand={setExpandedMedia} onEdit={(nodeId, src, originalImage, canvasData) => setEditingImage({ nodeId, src, originalImage, canvasData })} onCrop={(id, src, type) => { setCroppingNodeId(id); if (type === 'video') { setVideoToCrop(src); setImageToCrop(null); } else { setImageToCrop(src); setVideoToCrop(null); } }} onUploadImageFile={uploadImageFile} onUploadVideoFile={uploadVideoFile}
+                            key={node.id} node={node} zoom={scale} onUpdate={handleNodeUpdate} onAction={handleNodeAction} onDelete={(id) => deleteNodes([id])}
+                            onExpand={(data) => {
+                                if (data.type === 'image') {
+                                    setImageModal({
+                                        nodeId: data.nodeId || '',
+                                        src: data.src,
+                                        images: data.images,
+                                        initialIndex: data.initialIndex,
+                                        originalImage: data.originalImage,
+                                        editOriginImage: data.editOriginImage,
+                                        canvasData: data.canvasData,
+                                        initialMode: 'preview',
+                                    });
+                                    return;
+                                }
+                                setExpandedMedia(data);
+                            }}
+                            onEdit={(nodeId, src, originalImage, canvasData, editOriginImage) => setImageModal({ nodeId, src, originalImage, canvasData, editOriginImage, initialMode: 'edit' })}
+                            onCrop={(id, src, type) => { setCroppingNodeId(id); if (type === 'video') { setVideoToCrop(src); setImageToCrop(null); } else { setImageToCrop(src); setVideoToCrop(null); } }} onUploadImageFile={uploadImageFile} onUploadVideoFile={uploadVideoFile}
                             onNodeMouseDown={(e, id) => {
                                 e.stopPropagation();
                                 e.preventDefault(); // 防止拖拽选中文本
@@ -5764,6 +5952,70 @@ export default function StudioTab() {
                                     <Copy size={12} /> 复制节点
                                 </button>
                                 {(() => { const targetNode = nodes.find(n => n.id === contextMenu.id); if (targetNode) { const isVideo = targetNode.type === NodeType.VIDEO_GENERATOR; const isImage = targetNode.type === NodeType.IMAGE_GENERATOR || targetNode.type === NodeType.IMAGE_EDITOR; if (isVideo || isImage) { return (<button className="w-full text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-purple-500/20 hover:text-purple-400 rounded-lg flex items-center gap-2 transition-colors" onClick={() => { replacementTargetRef.current = contextMenu.id ?? null; if (isVideo) replaceVideoInputRef.current?.click(); else replaceImageInputRef.current?.click(); setContextMenu(null); }}> <RefreshCw size={12} /> 替换素材 </button>); } } return null; })()}
+                                {/* 平铺组图：将组图内图片/视频拆分为独立节点 */}
+                                {(() => {
+                                    const targetNode = nodes.find(n => n.id === contextMenu.id);
+                                    if (!targetNode) return null;
+                                    const imgs = targetNode.data.images || [];
+                                    const vids = targetNode.data.videoUris || [];
+                                    if (imgs.length <= 1 && vids.length <= 1) return null;
+                                    const isVideoTile = vids.length > 1;
+                                    const items = isVideoTile ? vids : imgs;
+                                    return (
+                                        <button
+                                            className="w-full text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-blue-500/20 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg flex items-center gap-2 transition-colors"
+                                            onClick={() => {
+                                                saveHistory();
+                                                const nodeWidth = targetNode.width || 420;
+                                                const [rw, rh] = (targetNode.data.aspectRatio || '16:9').split(':').map(Number);
+                                                const nodeHeight = targetNode.height || Math.round(nodeWidth * rh / rw);
+                                                const gap = 24;
+                                                // 获取上游连接
+                                                const upstreamConns = connections.filter(c => c.to === targetNode.id);
+                                                // 第一张留在原节点，清除组图数组
+                                                if (isVideoTile) {
+                                                    handleNodeUpdate(targetNode.id, { videoUri: items[0], videoUris: [items[0]] });
+                                                } else {
+                                                    handleNodeUpdate(targetNode.id, { image: items[0], images: [items[0]] });
+                                                }
+                                                // 其余项创建新节点，平铺在原节点右侧
+                                                const newNodes: AppNode[] = [];
+                                                const newConns: Connection[] = [];
+                                                for (let i = 1; i < items.length; i++) {
+                                                    const newId = `n-${Date.now()}-${Math.floor(Math.random() * 10000)}-${i}`;
+                                                    const newX = targetNode.x + (nodeWidth + gap) * i;
+                                                    const newY = targetNode.y;
+                                                    const newData = isVideoTile
+                                                        ? { ...targetNode.data, videoUri: items[i], videoUris: [items[i]], images: undefined, image: undefined }
+                                                        : { ...targetNode.data, image: items[i], images: [items[i]], videoUri: undefined, videoUris: undefined };
+                                                    newNodes.push({
+                                                        id: newId,
+                                                        type: targetNode.type,
+                                                        x: newX,
+                                                        y: newY,
+                                                        width: targetNode.width,
+                                                        height: targetNode.height,
+                                                        title: targetNode.title,
+                                                        status: NodeStatus.SUCCESS,
+                                                        data: newData,
+                                                        inputs: upstreamConns.map(c => c.from),
+                                                        modifiedAt: Date.now(),
+                                                    });
+                                                    // 复制上游连接
+                                                    upstreamConns.forEach(c => {
+                                                        newConns.push({ from: c.from, to: newId, modifiedAt: Date.now() });
+                                                    });
+                                                }
+                                                setNodes(prev => [...prev, ...newNodes]);
+                                                setConnections(prev => [...prev, ...newConns]);
+                                                setContextMenu(null);
+                                                setContextMenuTarget(null);
+                                            }}
+                                        >
+                                            <Layers size={12} /> 平铺组图
+                                        </button>
+                                    );
+                                })()}
                                 <button className="w-full text-left px-3 py-2 text-xs font-medium text-red-400 dark:text-red-400 hover:bg-red-500/20 rounded-lg flex items-center gap-2 transition-colors mt-1" onClick={() => { deleteNodes([contextMenuTarget.id]); setContextMenu(null); }}><Trash2 size={12} /> 删除节点</button>
                             </>
                         )}
@@ -5847,7 +6099,7 @@ export default function StudioTab() {
                                 ];
                             } else if (hasImage && !hasVideo) {
                                 availableTypes = [
-                                    { type: NodeType.PROMPT_INPUT, label: '分析图片', icon: FileSearch, color: 'text-emerald-500' },
+                                    { type: NodeType.PROMPT_INPUT, label: '文本', icon: Type, color: 'text-amber-500' },
                                     { type: NodeType.IMAGE_GENERATOR, label: '编辑图片', icon: ImageIcon, color: 'text-blue-500' },
                                     { type: NodeType.VIDEO_GENERATOR, label: '生成视频', icon: Film, color: 'text-purple-500' },
                                     { type: NodeType.MULTI_FRAME_VIDEO, label: '智能多帧', icon: Scan, color: 'text-teal-500' },
@@ -5855,7 +6107,7 @@ export default function StudioTab() {
                                 ];
                             } else if (hasVideo && !hasImage) {
                                 availableTypes = [
-                                    { type: NodeType.PROMPT_INPUT, label: '分析视频', icon: FileSearch, color: 'text-emerald-500' },
+                                    { type: NodeType.PROMPT_INPUT, label: '文本', icon: Type, color: 'text-amber-500' },
                                     { type: NodeType.VIDEO_FACTORY, label: '剧情延展', icon: Film, color: 'text-purple-500', generationMode: 'CONTINUE' },
                                 ];
                             }
@@ -5896,7 +6148,7 @@ export default function StudioTab() {
                                         return '剧情延展';
                                     }
                                     const typeMap: Record<string, string> = {
-                                        [NodeType.PROMPT_INPUT]: '素材分析',
+                                        [NodeType.PROMPT_INPUT]: '文本',
                                         [NodeType.IMAGE_GENERATOR]: '图片生成',
                                         [NodeType.VIDEO_GENERATOR]: '视频生成',
                                         [NodeType.VIDEO_FACTORY]: '视频工厂',
@@ -5913,7 +6165,7 @@ export default function StudioTab() {
                                 const getDefaultModel = () => {
                                     if (modelId) return modelId;
                                     if (savedConfig.model) return savedConfig.model;
-                                    if (nodeType === NodeType.PROMPT_INPUT) return 'gemini-2.5-flash';
+                                    if (nodeType === NodeType.PROMPT_INPUT) return undefined;
                                     if (nodeType === NodeType.IMAGE_GENERATOR) return 'nano-banana';
                                     if (nodeType === NodeType.VIDEO_GENERATOR) return 'veo3.1';
                                     if (nodeType === NodeType.VIDEO_FACTORY) return 'veo3.1';
@@ -6010,8 +6262,8 @@ export default function StudioTab() {
                             const handleCreateUpstreamNode = (type: NodeType) => {
                                 saveHistory();
                                 const newNodeWidth = 420;
-                                // 计算新节点高度：文本360，素材16:9(236)
-                                const newNodeHeight = type === NodeType.PROMPT_INPUT ? 360 :
+                                // 计算新节点高度：文本9:16(747)，素材16:9(236)
+                                const newNodeHeight = type === NodeType.PROMPT_INPUT ? Math.round(420 * 16 / 9) :
                                     (type === NodeType.IMAGE_ASSET || type === NodeType.VIDEO_ASSET) ? Math.round(420 * 9 / 16) : 320;
 
                                 // 获取目标节点的实际高度
@@ -6055,7 +6307,7 @@ export default function StudioTab() {
                             return (
                                 <>
                                     <div className={`px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider ${isPromptNode ? 'text-amber-600 dark:text-amber-400' : 'text-teal-600 dark:text-teal-400'}`}>
-                                        {isPromptNode ? '添加媒体分析' : '添加输入节点'}
+                                        {isPromptNode ? '添加输入' : '添加输入节点'}
                                     </div>
                                     {/* 非提示词节点才显示文本选项 */}
                                     {!isPromptNode && (
@@ -6070,13 +6322,13 @@ export default function StudioTab() {
                                         className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg flex items-center gap-2.5 transition-colors"
                                         onClick={() => handleCreateUpstreamNode(NodeType.IMAGE_ASSET)}
                                     >
-                                        <ImageIcon size={12} className="text-blue-500 dark:text-blue-400" /> {isPromptNode ? '分析图片' : '图片'}
+                                        <ImageIcon size={12} className="text-blue-500 dark:text-blue-400" /> 图片
                                     </button>
                                     <button
                                         className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg flex items-center gap-2.5 transition-colors"
                                         onClick={() => handleCreateUpstreamNode(NodeType.VIDEO_ASSET)}
                                     >
-                                        <VideoIcon size={12} className="text-green-500 dark:text-green-400" /> {isPromptNode ? '分析视频' : '视频'}
+                                        <VideoIcon size={12} className="text-green-500 dark:text-green-400" /> 视频
                                     </button>
                                 </>
                             );
@@ -6116,6 +6368,58 @@ export default function StudioTab() {
                                 >
                                     <LayoutTemplate size={12} /> 新建分组
                                 </button>
+                                {/* 打包：将选中节点的图片/视频合并为组图 */}
+                                {(() => {
+                                    const selNodes = nodes.filter(n => contextMenuTarget.ids?.includes(n.id));
+                                    const imgNodes = selNodes.filter(n => n.data.image && !n.data.videoUri);
+                                    const vidNodes = selNodes.filter(n => n.data.videoUri);
+                                    const canPack = imgNodes.length >= 2 || vidNodes.length >= 2;
+                                    if (!canPack) return null;
+                                    return (
+                                        <button
+                                            className="px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-blue-600 dark:hover:text-blue-400 rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                                            onClick={() => {
+                                                saveHistory();
+                                                const removedIds: string[] = [];
+                                                // 打包图片节点
+                                                if (imgNodes.length >= 2) {
+                                                    const target = imgNodes[0];
+                                                    const allImages: string[] = [];
+                                                    imgNodes.forEach(n => {
+                                                        if (n.data.images && n.data.images.length > 0) {
+                                                            allImages.push(...n.data.images);
+                                                        } else if (n.data.image) {
+                                                            allImages.push(n.data.image);
+                                                        }
+                                                    });
+                                                    handleNodeUpdate(target.id, { image: target.data.image, images: allImages });
+                                                    removedIds.push(...imgNodes.slice(1).map(n => n.id));
+                                                }
+                                                // 打包视频节点
+                                                if (vidNodes.length >= 2) {
+                                                    const target = vidNodes[0];
+                                                    const allVideos: string[] = [];
+                                                    vidNodes.forEach(n => {
+                                                        if (n.data.videoUris && n.data.videoUris.length > 0) {
+                                                            allVideos.push(...n.data.videoUris);
+                                                        } else if (n.data.videoUri) {
+                                                            allVideos.push(n.data.videoUri);
+                                                        }
+                                                    });
+                                                    handleNodeUpdate(target.id, { videoUri: target.data.videoUri, videoUris: allVideos });
+                                                    removedIds.push(...vidNodes.slice(1).map(n => n.id));
+                                                }
+                                                if (removedIds.length > 0) {
+                                                    deleteNodes(removedIds);
+                                                }
+                                                setContextMenu(null);
+                                                setContextMenuTarget(null);
+                                            }}
+                                        >
+                                            <Layers size={12} /> 打包为组图
+                                        </button>
+                                    );
+                                })()}
                                 <button
                                     className="px-2.5 py-1.5 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-red-500/15 rounded-xl flex items-center gap-1.5 transition-colors whitespace-nowrap"
                                     onClick={() => {
@@ -6148,26 +6452,62 @@ export default function StudioTab() {
                     }
                 }} />}
                 <ExpandedView media={expandedMedia} onClose={() => setExpandedMedia(null)} />
-                {editingImage && (
+                {imageModal && (
                     <ImageEditOverlay
-                        imageSrc={editingImage.src}
-                        originalImage={editingImage.originalImage}
-                        canvasData={editingImage.canvasData}
-                        nodeId={editingImage.nodeId}
-                        onClose={() => setEditingImage(null)}
-                        onSave={async (nodeId, compositeImage, originalImage, canvasData) => {
+                        imageSrc={imageModal.src}
+                        images={imageModal.images}
+                        initialIndex={imageModal.initialIndex}
+                        initialMode={imageModal.initialMode}
+                        originalImage={imageModal.originalImage}
+                        editOriginImage={imageModal.editOriginImage}
+                        canvasData={imageModal.canvasData}
+                        nodeId={imageModal.nodeId}
+                        onClose={() => setImageModal(null)}
+                        onSave={async (nodeId, compositeImage, originalImage, canvasData, activeIndex) => {
+                            const maybeUploadImage = async (value?: string) => {
+                                if (!value) return value;
+                                if (!value.startsWith('data:')) return value;
+                                return uploadImageDataUrl(value);
+                            };
+
                             try {
                                 handleNodeUpdate(nodeId, { uploading: true });
-                                const [compositeUrl, originalUrl] = await Promise.all([
-                                    uploadImageDataUrl(compositeImage),
-                                    uploadImageDataUrl(originalImage),
+
+                                const [compositeUrl, originalUrl, canvasUrl, editOriginUrl] = await Promise.all([
+                                    maybeUploadImage(compositeImage),
+                                    maybeUploadImage(originalImage),
+                                    maybeUploadImage(canvasData),
+                                    maybeUploadImage(imageModal.editOriginImage || imageModal.src),
                                 ]);
-                                handleNodeUpdate(nodeId, { image: compositeUrl, originalImage: originalUrl, canvasData, uploading: false });
+
+                                let nextImages: string[] | undefined;
+                                if (imageModal.images && imageModal.images.length > 0) {
+                                    nextImages = [...imageModal.images];
+                                    const idx = typeof activeIndex === 'number'
+                                        ? activeIndex
+                                        : Math.max(0, nextImages.indexOf(imageModal.src));
+                                    if (idx >= 0 && idx < nextImages.length) {
+                                        nextImages[idx] = compositeUrl || compositeImage;
+                                    }
+                                    nextImages = await Promise.all(
+                                        nextImages.map(async (img) => (await maybeUploadImage(img)) || img)
+                                    );
+                                }
+
+                                handleNodeUpdate(nodeId, {
+                                    image: compositeUrl || compositeImage,
+                                    images: nextImages,
+                                    originalImage: originalUrl || originalImage,
+                                    editOriginImage: editOriginUrl || imageModal.editOriginImage || imageModal.src,
+                                    canvasData: canvasUrl || canvasData,
+                                    uploading: false,
+                                    mediaOrigin: 'edited',
+                                });
                             } catch (error) {
                                 console.warn('[Studio] Edit upload failed:', error);
                                 handleNodeUpdate(nodeId, { uploading: false });
                             } finally {
-                                setEditingImage(null);
+                                setImageModal(null);
                             }
                         }}
                     />
@@ -6210,8 +6550,33 @@ export default function StudioTab() {
                 )}
 
                 <AssistantPanel
-                    isVisible={isChatOpen}
+                    isOpen={isChatOpen}
                     onClose={() => setIsChatOpen(false)}
+                    externalDragState={chatDragState}
+                    externalIncomingAsset={chatIncomingAsset}
+                    onExternalIncomingAssetHandled={() => setChatIncomingAsset(null)}
+                />
+
+                {/* 用户信息入口 - 左下角 */}
+                <div data-user-panel className="absolute bottom-8 left-8 z-50 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                    <UserInfoWidget
+                        onOpenModal={(tab) => {
+                            setUserModalTab(tab);
+                            setIsUserModalOpen(true);
+                        }}
+                        onOpenLogin={() => setIsLoginOpen(true)}
+                    />
+                </div>
+
+                <UserInfoModal
+                    isOpen={isUserModalOpen}
+                    onClose={() => setIsUserModalOpen(false)}
+                    defaultTab={userModalTab}
+                />
+
+                <LoginModal
+                    isOpen={isLoginOpen}
+                    onClose={() => setIsLoginOpen(false)}
                 />
 
                 {/* 底部工具栏：撤销/重做 + 缩放控制 */}
@@ -6322,6 +6687,7 @@ export default function StudioTab() {
                     <SubjectEditor
                         subject={editingSubject}
                         initialImage={subjectEditorInitialImage || undefined}
+                        canvasImageSources={canvasImageSources}
                         onSave={handleSaveSubject}
                         onCancel={() => { setIsSubjectEditorOpen(false); setEditingSubject(null); setSubjectEditorInitialImage(null); }}
                     />

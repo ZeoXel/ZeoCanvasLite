@@ -4,6 +4,7 @@ import React, { useMemo, useState, useRef } from 'react';
 import type { Subject } from '@/types';
 import { getPrimaryImage } from '@/services/subjectService';
 import { getSubjectThumbnailSrc } from '@/services/cosStorage';
+import { computeOverlayTransform } from '@/services/promptOverlayScroll';
 
 interface SubjectHighlighterProps {
   text: string;
@@ -12,6 +13,9 @@ interface SubjectHighlighterProps {
   style?: React.CSSProperties;
   /** 当前选择的模型 - 用于判断主体支持数量 */
   model?: string;
+  /** 绑定 textarea 滚动偏移，保持高亮层和文本层对齐 */
+  scrollTop?: number;
+  scrollLeft?: number;
 }
 
 interface TooltipState {
@@ -36,6 +40,8 @@ export const SubjectHighlighter: React.FC<SubjectHighlighterProps> = ({
   className = '',
   style,
   model,
+  scrollTop = 0,
+  scrollLeft = 0,
 }) => {
   // 判断是否为 Vidu 模型（原生支持多主体）
   const isViduModel = model?.startsWith('vidu') || false;
@@ -163,6 +169,8 @@ export const SubjectHighlighter: React.FC<SubjectHighlighterProps> = ({
   const hasSubjectRefs = segments.some(s => s.type === 'subject');
   if (!hasSubjectRefs) return null;
 
+  const textLayerStyle = computeOverlayTransform(scrollTop, scrollLeft);
+
   return (
     <div
       ref={containerRef}
@@ -171,7 +179,7 @@ export const SubjectHighlighter: React.FC<SubjectHighlighterProps> = ({
       aria-hidden="true"
     >
       {/* 高亮文本层 - 保持与 textarea 相同的文本布局 */}
-      <div className="whitespace-pre-wrap break-words">
+      <div className="whitespace-pre-wrap break-words" style={textLayerStyle}>
         {segments.map((segment, index) => {
           if (segment.type === 'text') {
             // 普通文本用透明色渲染（保持布局但不可见）
@@ -187,9 +195,6 @@ export const SubjectHighlighter: React.FC<SubjectHighlighterProps> = ({
             const bgColorClass = isSupported
               ? 'bg-violet-200/80 dark:bg-violet-800/60'
               : 'bg-slate-300/80 dark:bg-slate-600/60';
-            const textColorClass = isSupported
-              ? 'text-violet-700 dark:text-violet-300'
-              : 'text-slate-500 dark:text-slate-400';
 
             return (
               <span
@@ -202,7 +207,7 @@ export const SubjectHighlighter: React.FC<SubjectHighlighterProps> = ({
                 {/* 背景高亮层 */}
                 <span className="relative">
                   <span className={`absolute inset-0 -mx-0.5 -my-0.5 px-0.5 py-0.5 rounded ${bgColorClass}`} />
-                  <span className={`relative ${textColorClass}`}>
+                  <span className="relative text-transparent">
                     {segment.content}
                   </span>
                 </span>

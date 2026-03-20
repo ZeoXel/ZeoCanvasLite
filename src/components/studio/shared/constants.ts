@@ -18,6 +18,14 @@ export const SEEDREAM_SIZE_MAP: Record<string, string> = {
     '9:16': '1440x2560',
 };
 
+export const SEEDREAM_3_0_SIZE_MAP: Record<string, string> = {
+    '1:1': '1024x1024',
+    '4:3': '864x1152',
+    '3:4': '1152x864',
+    '16:9': '1280x720',
+    '9:16': '720x1280',
+};
+
 // 图像模型参数配置映射
 export interface ImageModelConfig {
     supportsAspectRatio: boolean;
@@ -48,6 +56,22 @@ export const IMAGE_MODEL_CONFIG: Record<string, ImageModelConfig> = {
         defaultAspectRatio: '1:1',
         defaultResolution: '2k',
         sizeMap: SEEDREAM_SIZE_MAP,
+    },
+    'doubao-seedream-3-0-t2i-250415': {
+        supportsAspectRatio: true,
+        supportsResolution: false,
+        supportsMultiImage: false,
+        aspectRatios: ['1:1', '4:3', '3:4', '16:9', '9:16'],
+        defaultAspectRatio: '1:1',
+        sizeMap: SEEDREAM_3_0_SIZE_MAP,
+    },
+    'doubao-seededit-3-0-i2i-250628': {
+        supportsAspectRatio: true,
+        supportsResolution: false,
+        supportsMultiImage: false,
+        aspectRatios: ['1:1', '4:3', '3:4', '16:9', '9:16'],
+        defaultAspectRatio: '1:1',
+        sizeMap: SEEDREAM_3_0_SIZE_MAP,
     },
     'nano-banana': {
         supportsAspectRatio: true,

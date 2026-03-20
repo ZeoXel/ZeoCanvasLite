@@ -154,9 +154,15 @@ const ViduConfigPanel: React.FC<{
     const showBgm = (mode === 'text2video' || mode === 'start-end' || mode === 'reference') && !isQ3;
     // audio: 仅图生视频支持
     const showAudio = mode === 'img2video';
+    const hasAnyOption = showMovement || showBgm || showAudio;
 
     return (
         <div className="space-y-2">
+            {!hasAnyOption && (
+                <div className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed">
+                    当前模型在该模式下暂无可调参数，保持默认即可。
+                </div>
+            )}
             {/* 运动幅度 - 图生/首尾帧 */}
             {showMovement && (
                 <OptionButtonGroup

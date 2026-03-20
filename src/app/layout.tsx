@@ -14,12 +14,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "零素觉醒AI创作平台",
-  description: "零素觉醒AI创作平台",
+  title: "ZeoCanvas",
+  description: "ZeoCanvas",
   icons: {
-    icon: "/零素LOGO.svg",
-    shortcut: "/零素LOGO.svg",
-    apple: "/零素LOGO.svg",
+    icon: "/logo.svg",
+    shortcut: "/logo.svg",
+    apple: "/logo.svg",
   },
 };
 

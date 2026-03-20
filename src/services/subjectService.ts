@@ -12,6 +12,7 @@
 
 import type { Subject, SubjectImage } from '@/types';
 import { uploadToCos, getSubjectImageSrc, getSubjectThumbnailSrc, buildSubjectPath } from './cosStorage';
+import { collectMentionedSubjectIds } from './subjectMentionOrder';
 
 // ==================== 主体引用解析 ====================
 
@@ -36,40 +37,31 @@ export const parseSubjectReferences = (
 ): SubjectReference[] => {
   if (!prompt || !subjects || subjects.length === 0) return [];
 
-  const refs: SubjectReference[] = [];
-  const seen = new Set<string>();
-
-  // 按名称长度降序排序，优先匹配更长的名称（避免 @小灰灰 被 @小灰 误匹配）
   const sortedSubjects = [...subjects].sort((a, b) => b.name.length - a.name.length);
+  const subjectById = new Map(sortedSubjects.map((subject) => [subject.id, subject]));
+  const orderedIds = collectMentionedSubjectIds(
+    prompt,
+    sortedSubjects.map((subject) => ({
+      subjectId: subject.id,
+      tokens: [subject.name, subject.id].filter((t, idx, arr) => t && arr.indexOf(t) === idx),
+    }))
+  );
 
-  for (const subject of sortedSubjects) {
-    const tokens = [subject.name, subject.id].filter((t, idx, arr) => t && arr.indexOf(t) === idx);
-    const hasMatch = tokens.some(token => {
-      const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // 匹配 @名称 或 @ID，名称/ID 后不能是英文字母数字下划线（避免 @test 匹配 @test123）
-      // 中文场景：@小灰在奔跑 可以匹配，因为"在"不是英文字符
-      const pattern = new RegExp(`@${escapedToken}(?![a-zA-Z0-9_])`, 'g');
-      return pattern.test(prompt);
+  const refs: SubjectReference[] = [];
+  for (const id of orderedIds) {
+    const subject = subjectById.get(id);
+    if (!subject || subject.images.length === 0) continue;
+
+    const frontImage = subject.images.find(img => img.angle === 'front');
+    const targetImage = frontImage || subject.images[0];
+    const primaryImage = getSubjectImageSrc(targetImage);
+
+    refs.push({
+      id: subject.id,
+      primaryImage,
+      name: subject.name,
+      subject,
     });
-
-    if (hasMatch && !seen.has(subject.id)) {
-      seen.add(subject.id);
-
-      if (subject.images.length > 0) {
-        // 获取主要图片：优先 front 角度，否则取第一张
-        // 优先使用 URL，回退到 Base64
-        const frontImage = subject.images.find(img => img.angle === 'front');
-        const targetImage = frontImage || subject.images[0];
-        const primaryImage = getSubjectImageSrc(targetImage);
-
-        refs.push({
-          id: subject.id,
-          primaryImage,
-          name: subject.name,
-          subject, // 完整的主体对象
-        });
-      }
-    }
   }
 
   return refs;

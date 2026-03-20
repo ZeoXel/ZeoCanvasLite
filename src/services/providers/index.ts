@@ -16,6 +16,7 @@ export * as seedream from './seedream';
 export { generateImage, editImage, IMAGE_MODELS } from './image';
 export { SIZE_MAP as SEEDREAM_SIZE_MAP } from './seedream';
 export { SIZE_MAP_4K as SEEDREAM_SIZE_MAP_4K } from './seedream';
+export { SIZE_MAP_3_0 as SEEDREAM_SIZE_MAP_3_0 } from './seedream';
 
 // ==================== 视频服务 ====================
 export * as veo from './veo';
@@ -25,6 +26,7 @@ export * as vidu from './vidu';
 import * as veoService from './veo';
 import * as seedanceService from './seedance';
 import * as viduService from './vidu';
+import { mergeViduReferenceImages } from './viduReference';
 
 // ==================== 音频服务 ====================
 export * as minimax from './minimax';
@@ -128,9 +130,7 @@ export const generateVideo = async (
         // 主体参考模式 - 使用 reference2video
         mode = 'reference';
         console.log(`[Vidu] Using reference mode with ${viduSubjects.length} subjects`);
-        const mergedImages = Array.from(
-          new Set([...(images || []), ...viduSubjects.flatMap(s => s.images || [])].filter(Boolean))
-        ).slice(0, 7);
+        const mergedImages = mergeViduReferenceImages(images || [], viduSubjects);
 
         const result = await viduService.generateVideo({
           mode,

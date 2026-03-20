@@ -313,6 +313,9 @@ export const processSubjectRef = async (
     prompt: string
 ): Promise<StrategyResult> => {
     const selectedSubjects = node.data.selectedSubjects || [];
+    const referenceImages = inputs
+        .map(n => n.data.croppedFrame || n.data.image)
+        .filter(Boolean) as string[];
 
     if (selectedSubjects.length === 0) {
         // 没有选择主体，回退到默认模式
@@ -338,7 +341,7 @@ export const processSubjectRef = async (
         finalPrompt,
         videoInput: null,
         inputImageForGeneration: null,
-        referenceImages: undefined,
+        referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
         subjects: selectedSubjects,
         generationMode: 'SUBJECT_REF'
     };

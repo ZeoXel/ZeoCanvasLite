@@ -4,6 +4,8 @@
  * 支持模型:
  * - doubao-seedream-5-0-lite: 即梦5.0 Lite，联网搜索、自定义输出格式（独有），最高3K分辨率
  * - doubao-seedream-4-5-251128: 即梦4.5，最高4K分辨率
+ * - doubao-seedream-3-0-t2i-250415: 即梦3.0 文生图
+ * - doubao-seededit-3-0-i2i-250628: 即梦3.0 图生图
  *
  * API 文档: https://ark.cn-beijing.volces.com/api/v3/images/generations
  */
@@ -79,6 +81,27 @@ export const SIZE_MAP_4K: Record<string, string> = {
 };
 
 const MODEL_5_LITE = 'doubao-seedream-5-0-260128';
+const MODEL_3_T2I = 'doubao-seedream-3-0-t2i-250415';
+const MODEL_EDIT_3_I2I = 'doubao-seededit-3-0-i2i-250628';
+
+const MODEL_ID_ALIASES: Record<string, string> = {
+  'doubao-seedream-3.0-t2i': MODEL_3_T2I,
+  'doubao-seedream-3-0-t2i': MODEL_3_T2I,
+  'doubao-seededit-3.0-i2i': MODEL_EDIT_3_I2I,
+  'doubao-seededit-3-0-i2i': MODEL_EDIT_3_I2I,
+};
+
+// 3.0 系列推荐尺寸（约 1K 档）
+export const SIZE_MAP_3_0: Record<string, string> = {
+  '1:1': '1024x1024',
+  '4:3': '864x1152',
+  '3:4': '1152x864',
+  '16:9': '1280x720',
+  '9:16': '720x1280',
+  '3:2': '832x1248',
+  '2:3': '1248x832',
+  '21:9': '1512x648',
+};
 
 // ==================== API 函数 ====================
 
@@ -92,7 +115,8 @@ export const generateImage = async (options: SeedreamGenerateOptions): Promise<I
     throw new Error('火山引擎 API Key 未配置 (VOLCENGINE_API_KEY)');
   }
 
-  const model = options.model || 'doubao-seedream-4-5-251128';
+  const requestedModel = options.model || 'doubao-seedream-4-5-251128';
+  const model = MODEL_ID_ALIASES[requestedModel] || requestedModel;
   const is5Lite = model === MODEL_5_LITE;
 
   // 确定 size：5.0-lite 默认用 2K（3K 档由调用方通过 size 参数显式指定）
@@ -170,6 +194,8 @@ export const PROVIDER_INFO = {
   models: [
     { id: MODEL_5_LITE, name: 'Seedream 5.0 Lite', isDefault: true },
     { id: 'doubao-seedream-4-5-251128', name: 'Seedream 4.5' },
+    { id: MODEL_3_T2I, name: 'Seedream 3.0' },
+    { id: MODEL_EDIT_3_I2I, name: 'Seedream 3.0' },
   ],
   capabilities: {
     aspectRatios: ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],

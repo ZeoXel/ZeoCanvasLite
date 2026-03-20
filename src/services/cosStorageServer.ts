@@ -71,9 +71,11 @@ function getCosInstance(): any {
     throw new Error('COS credentials not configured. Please set COS_SECRET_ID and COS_SECRET_KEY environment variables.');
   }
 
+  const useInternal = process.env.COS_INTERNAL === 'true';
   cosInstance = new COS({
     SecretId: COS_CONFIG.secretId,
     SecretKey: COS_CONFIG.secretKey,
+    ...(useInternal ? { Domain: `${COS_CONFIG.bucket}.cos-internal.${COS_CONFIG.region}.myqcloud.com` } : {}),
   });
 
   return cosInstance;
@@ -89,6 +91,7 @@ export interface CosUploadResult {
 
 /**
  * 上传纯文本/JSON 到指定 Key（服务端）
+ * 大于 1KB 自动 gzip 压缩
  */
 export async function uploadTextToCosServer(
   text: string,
@@ -96,7 +99,16 @@ export async function uploadTextToCosServer(
   contentType: string = 'application/json'
 ): Promise<CosUploadResult> {
   const cos = getCosInstance();
-  const body = Buffer.from(text, 'utf-8');
+  const raw = Buffer.from(text, 'utf-8');
+  const useGzip = raw.length > 1024;
+
+  let body: Buffer;
+  if (useGzip) {
+    const { gzipSync } = require('zlib');
+    body = gzipSync(raw);
+  } else {
+    body = raw;
+  }
 
   return new Promise((resolve, reject) => {
     cos.putObject(
@@ -106,6 +118,7 @@ export async function uploadTextToCosServer(
         Key: key,
         Body: body,
         ContentType: contentType,
+        ...(useGzip ? { ContentEncoding: 'gzip' } : {}),
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (err: any, data: any) => {
@@ -123,6 +136,7 @@ export async function uploadTextToCosServer(
 
 /**
  * 从 COS 读取对象内容为文本（服务端）
+ * 自动检测并解压 gzip 内容
  */
 export async function fetchTextFromCosServer(key: string): Promise<string | null> {
   const cos = getCosInstance();
@@ -145,24 +159,35 @@ export async function fetchTextFromCosServer(key: string): Promise<string | null
           reject(err);
           return;
         }
+        let buf: Buffer | null = null;
         const body = data?.Body;
         if (!body) {
           resolve('');
           return;
         }
         if (Buffer.isBuffer(body)) {
-          resolve(body.toString('utf-8'));
-          return;
-        }
-        if (typeof body === 'string') {
+          buf = body;
+        } else if (body instanceof ArrayBuffer) {
+          buf = Buffer.from(body);
+        } else if (typeof body === 'string') {
           resolve(body);
           return;
-        }
-        if (body instanceof ArrayBuffer) {
-          resolve(Buffer.from(body).toString('utf-8'));
+        } else {
+          resolve(String(body));
           return;
         }
-        resolve(String(body));
+
+        // 检测 gzip magic bytes (1f 8b)
+        if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) {
+          try {
+            const { gunzipSync } = require('zlib');
+            resolve(gunzipSync(buf).toString('utf-8'));
+          } catch {
+            resolve(buf.toString('utf-8'));
+          }
+        } else {
+          resolve(buf.toString('utf-8'));
+        }
       }
     );
   });
@@ -230,10 +255,18 @@ export async function uploadBufferToCosServer(
  */
 export async function uploadFromUrl(
   sourceUrl: string,
-  prefix: string = 'media'
+  prefix: string = 'media',
+  timeoutMs: number = 30_000
 ): Promise<CosUploadResult> {
-  // 下载文件
-  const response = await fetch(sourceUrl);
+  // 下载文件（带超时，防止海外 URL 下载过慢阻塞请求）
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(sourceUrl, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     throw new Error(`Failed to download file: ${response.status}`);
   }

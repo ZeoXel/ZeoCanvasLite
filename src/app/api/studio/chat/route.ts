@@ -21,7 +21,7 @@ const getApiConfig = () => {
     const rawBaseUrl = process.env.GATEWAY_BASE_URL
         || process.env.OPENAI_API_BASE
         || process.env.OPENAI_BASE_URL
-        || 'https://api.lsaigc.com';
+        || 'https://your-api-gateway.com';
     const baseUrl = normalizeOpenAIBase(rawBaseUrl);
     return { baseUrl };
 };
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
             .slice(0, 4);
 
         const { baseUrl } = getApiConfig();
-        const { apiKey } = await getAssignedGatewayKey('openai');
+        const { apiKey } = await getAssignedGatewayKey();
 
         if (!apiKey) {
             return NextResponse.json({ error: '未分配可用的API Key' }, { status: 401 });

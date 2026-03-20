@@ -42,6 +42,8 @@ import { getProviderByModelId, getProvidersByCategory, type ModelCategory } from
 import { estimateNodeCredits } from '@/services/pricing/nodeCreditEstimator';
 import { isViduModelModeSupported, type ViduGenerationMode } from '@/services/providers/viduCapabilities';
 import { parseSubjectReferences } from '@/services/subjectService';
+import { getSubjectImageSrc } from '@/services/cosStorage';
+import { analyzeViduReferenceImages, buildViduReferencePreviewAssets, MAX_VIDU_REFERENCE_IMAGES } from '@/services/viduReferencePreview';
 
 // Re-export for backward compatibility
 export { globalVideoBlobCache } from './shared';
@@ -52,6 +54,18 @@ const Camera3DVisualizer = React.lazy(() => import('./Camera3DVisualizer'));
 const PROMPT_CONTENT_MIN_HEIGHT = 96;
 const PROMPT_CONTENT_MAX_HEIGHT = 2400;
 const PROMPT_NODE_CHROME_HEIGHT = 56;
+const CONFIG_PROMPT_MIN_HEIGHT = 80;
+const CONFIG_PROMPT_MAX_HEIGHT = 520;
+const FIXED_CONFIG_PANEL_WIDTH = 412;
+const SEEDREAM_30_T2I_MODEL = 'doubao-seedream-3-0-t2i-250415';
+const SEEDEDIT_30_I2I_MODEL = 'doubao-seededit-3-0-i2i-250628';
+const SEEDREAM_45_MODEL = 'doubao-seedream-4-5-251128';
+const SEEDREAM_3_I2I_DISABLED_REASON = '官方修复中';
+
+const isSeedream3AutoPair = (model?: string): boolean =>
+    model === SEEDREAM_30_T2I_MODEL || model === SEEDEDIT_30_I2I_MODEL;
+
+const resolveSeedream3TextModel = (): string => SEEDREAM_30_T2I_MODEL;
 
 /**
  * 带悬停提示的图标组件
@@ -83,8 +97,18 @@ interface NodeProps {
     onUpdate: (id: string, data: Partial<AppNode['data']>, size?: { width?: number, height?: number }, title?: string) => void;
     onAction: (id: string, prompt?: string) => void;
     onDelete: (id: string) => void;
-    onExpand?: (data: { type: 'image' | 'video', src: string, rect: DOMRect, images?: string[], initialIndex?: number }) => void;
-    onEdit?: (nodeId: string, src: string, originalImage?: string, canvasData?: string) => void;
+    onExpand?: (data: {
+        type: 'image' | 'video',
+        src: string,
+        rect: DOMRect,
+        images?: string[],
+        initialIndex?: number,
+        nodeId?: string,
+        originalImage?: string,
+        canvasData?: string,
+        editOriginImage?: string
+    }) => void;
+    onEdit?: (nodeId: string, src: string, originalImage?: string, canvasData?: string, editOriginImage?: string) => void;
     onCrop?: (id: string, src: string, type?: 'image' | 'video') => void;
     onNodeMouseDown: (e: React.MouseEvent, id: string) => void;
     onPortMouseDown: (e: React.MouseEvent, id: string, type: 'input' | 'output') => void;
@@ -176,7 +200,8 @@ const NodeComponent: React.FC<NodeProps> = ({
     const [isPromptEditing, setIsPromptEditing] = useState(false);
     const [promptContentHeight, setPromptContentHeight] = useState(150);
     const [isPromptContentResizing, setIsPromptContentResizing] = useState(false);
-    const [inputHeight, setInputHeight] = useState(80);
+    const [inputHeight, setInputHeight] = useState(CONFIG_PROMPT_MIN_HEIGHT);
+    const [promptScrollOffset, setPromptScrollOffset] = useState({ top: 0, left: 0 });
     const isResizingInput = useRef(false);
     const inputStartDragY = useRef(0);
     const inputStartHeight = useRef(0);
@@ -192,6 +217,17 @@ const NodeComponent: React.FC<NodeProps> = ({
     } | null>(null);
 
     useEffect(() => { setLocalPrompt(node.data.prompt || ''); }, [node.data.prompt]);
+    useEffect(() => {
+        setPromptScrollOffset({ top: 0, left: 0 });
+    }, [node.id, isPromptEditing]);
+    useEffect(() => {
+        if (node.type === NodeType.PROMPT_INPUT) return;
+        const textarea = promptTextareaRef.current;
+        if (!textarea) return;
+        const contentHeight = textarea.scrollHeight;
+        const nextHeight = Math.max(CONFIG_PROMPT_MIN_HEIGHT, Math.min(contentHeight, CONFIG_PROMPT_MAX_HEIGHT));
+        setInputHeight((prev) => (nextHeight > prev ? nextHeight : prev));
+    }, [localPrompt, node.type]);
     useEffect(() => {
         if (isSelected) return;
         setHideBottomPanelAfterUpload(false);
@@ -215,43 +251,107 @@ const NodeComponent: React.FC<NodeProps> = ({
             return () => clearTimeout(timer);
         }
     }, [showImageGrid]);
+    const handlePromptScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>) => {
+        const nextTop = e.currentTarget.scrollTop;
+        const nextLeft = e.currentTarget.scrollLeft;
+        setPromptScrollOffset((prev) => {
+            if (prev.top === nextTop && prev.left === nextLeft) return prev;
+            return { top: nextTop, left: nextLeft };
+        });
+    }, []);
     const commitPrompt = () => { if (localPrompt !== (node.data.prompt || '')) onUpdate(node.id, { prompt: localPrompt }); };
     const isVideoGenNode = node.type === NodeType.VIDEO_GENERATOR || node.type === NodeType.VIDEO_FACTORY;
     const isImageGenNode = node.type === NodeType.IMAGE_GENERATOR || node.type === NodeType.IMAGE_EDITOR || node.type === NodeType.IMAGE_3D_CAMERA;
+    const isStoryContinueMode = node.type === NodeType.VIDEO_FACTORY && (generationMode === 'CONTINUE' || generationMode === 'CUT');
     const isViduVideoNode = isVideoGenNode && (node.data.model || '').startsWith('vidu');
-    const enableSubjectMentions = isViduVideoNode && !!(subjects && subjects.length > 0);
+    const enableSubjectMentions = isViduVideoNode && !isStoryContinueMode && !!(subjects && subjects.length > 0);
     const hasVideoResult = !!(node.data.videoUri || (node.data.videoUris && node.data.videoUris.length > 0));
     const hasImageResult = !!(node.data.image || (node.data.images && node.data.images.length > 0));
     const estimatedCredits = useMemo(() => estimateNodeCredits(node, inputAssets || []), [node, inputAssets]);
     const currentProvider = useMemo(() => getProviderByModelId(node.data.model || ''), [node.data.model]);
     const videoModeOverride = (node.data.videoModeOverride || 'auto') as VideoGenerationMode | 'auto';
-    const hasSelectedSubjects = isViduVideoNode && (node.data.selectedSubjects?.length || 0) > 0;
-    const hasPromptSubjectMentions = useMemo(() => {
-        if (!isViduVideoNode) return false;
-        if (!subjects || subjects.length === 0) return false;
+    const hasSelectedSubjects = !isStoryContinueMode && isViduVideoNode && (node.data.selectedSubjects?.length || 0) > 0;
+    const promptSubjectReferences = useMemo(() => {
+        if (!enableSubjectMentions) return [];
         const promptForDetection = localPrompt || node.data.prompt || '';
-        if (!promptForDetection.includes('@')) return false;
-        return parseSubjectReferences(promptForDetection, subjects).length > 0;
-    }, [isViduVideoNode, localPrompt, node.data.prompt, subjects]);
+        if (!promptForDetection.includes('@')) return [];
+        return parseSubjectReferences(promptForDetection, subjects || []);
+    }, [enableSubjectMentions, localPrompt, node.data.prompt, subjects]);
+    const hasPromptSubjectMentions = !isStoryContinueMode && isViduVideoNode && promptSubjectReferences.length > 0;
     const hasSubjectReferences = hasSelectedSubjects || hasPromptSubjectMentions;
     const hasFirstLastFrameData = !!(node.data.firstLastFrameData?.firstFrame && node.data.firstLastFrameData?.lastFrame);
     const imageInputCount = (inputAssets || []).filter(a => a.type === 'image').length;
     const hasTwoImageInputs = imageInputCount === 2;
     const shouldPreferViduReference = isViduVideoNode && !hasSubjectReferences && !hasFirstLastFrameData && imageInputCount > 2;
     const hasInputImage = !!((inputAssets?.length || 0) > 0 || node.data.image);
-    const autoInferredVideoMode: VideoGenerationMode = hasSubjectReferences
-        ? 'reference'
-        : shouldPreferViduReference
+    const upstreamImageAssets = useMemo(
+        () => (inputAssets || []).filter((asset) => asset.type === 'image' && !!asset.src),
+        [inputAssets]
+    );
+    const upstreamReferenceImages = useMemo(
+        () => upstreamImageAssets.map((asset) => asset.src),
+        [upstreamImageAssets]
+    );
+    const promptSubjectPreviewSources = useMemo(
+        () => promptSubjectReferences.map((ref) => ({
+            subjectId: ref.id,
+            imageUrls: ref.subject.images
+                .map((img) => getSubjectImageSrc(img))
+                .filter(Boolean)
+                .slice(0, 3),
+        })),
+        [promptSubjectReferences]
+    );
+    const viduReferenceUsage = useMemo(() => {
+        if (!isViduVideoNode) return null;
+        return analyzeViduReferenceImages(upstreamReferenceImages, promptSubjectPreviewSources);
+    }, [isViduVideoNode, upstreamReferenceImages, promptSubjectPreviewSources]);
+    const getSubjectMentionDisabledReason = useCallback((subject: Subject): string | undefined => {
+        if (!isViduVideoNode) return undefined;
+        const currentIds = new Set(promptSubjectPreviewSources.map((item) => item.subjectId));
+        if (currentIds.has(subject.id)) return undefined;
+        const candidateImages = subject.images
+            .map((img) => getSubjectImageSrc(img))
+            .filter(Boolean)
+            .slice(0, 3);
+        if (candidateImages.length === 0) return '主体无可用参考图';
+        const usageWithCandidate = analyzeViduReferenceImages(
+            upstreamReferenceImages,
+            [...promptSubjectPreviewSources, { subjectId: subject.id, imageUrls: candidateImages }]
+        );
+        if (usageWithCandidate.totalUniqueImages > MAX_VIDU_REFERENCE_IMAGES) {
+            return `已达${MAX_VIDU_REFERENCE_IMAGES}张参考图上限`;
+        }
+        return undefined;
+    }, [isViduVideoNode, promptSubjectPreviewSources, upstreamReferenceImages]);
+    const viduReferencePreviewAssets = useMemo(() => {
+        if (!isViduVideoNode) return [];
+        if (promptSubjectPreviewSources.length === 0) return [];
+
+        return buildViduReferencePreviewAssets(
+            upstreamImageAssets,
+            promptSubjectPreviewSources
+        );
+    }, [upstreamImageAssets, isViduVideoNode, promptSubjectPreviewSources]);
+    const autoInferredVideoMode: VideoGenerationMode = isStoryContinueMode
+        ? 'img2video'
+        : hasSubjectReferences
             ? 'reference'
-            : (hasFirstLastFrameData || hasTwoImageInputs)
-            ? 'start-end'
-            : hasInputImage
-                ? 'img2video'
-                : 'text2video';
+            : shouldPreferViduReference
+                ? 'reference'
+                : (hasFirstLastFrameData || hasTwoImageInputs)
+                    ? 'start-end'
+                    : hasInputImage
+                        ? 'img2video'
+                        : 'text2video';
     const inferredVideoMode: VideoGenerationMode = videoModeOverride === 'auto'
         ? autoInferredVideoMode
         : videoModeOverride;
-    const viduModeForModelFilter: ViduGenerationMode = hasSubjectReferences ? 'reference-audio' : inferredVideoMode;
+    const viduModeForModelFilter: ViduGenerationMode = isStoryContinueMode
+        ? 'img2video'
+        : hasSubjectReferences
+            ? 'reference-audio'
+            : inferredVideoMode;
 
     // 所有同类厂商的模型，按厂商分组（用于下拉选择）
     const allModelsGrouped = useMemo(() => {
@@ -262,11 +362,33 @@ const NodeComponent: React.FC<NodeProps> = ({
         if (!category) return [];
         return getProvidersByCategory(category).map(p => ({
             provider: p,
-            models: p.id === 'vidu' && isVideoGenNode
-                ? p.models.filter(m => isViduModelModeSupported(m.id, viduModeForModelFilter))
-                : p.models,
+            models: (() => {
+                if (p.id === 'vidu' && isVideoGenNode) {
+                    return p.models.filter(m => isViduModelModeSupported(m.id, viduModeForModelFilter));
+                }
+                if (p.id === 'seedream' && isImageGenNode) {
+                    const hasUpstreamImageInputs = (inputAssets || []).some(asset => asset.type === 'image');
+                    const nonAutoModels = p.models.filter(
+                        m => m.id !== SEEDREAM_30_T2I_MODEL && m.id !== SEEDEDIT_30_I2I_MODEL
+                    );
+                    const seedream3Base = p.models.find(
+                        m => m.id === SEEDREAM_30_T2I_MODEL || m.id === SEEDEDIT_30_I2I_MODEL
+                    );
+                    const mergedSeedream3 = seedream3Base
+                        ? [{
+                            ...seedream3Base,
+                            id: resolveSeedream3TextModel(),
+                            name: 'Seedream 3.0',
+                            disabled: hasUpstreamImageInputs,
+                            disabledReason: hasUpstreamImageInputs ? SEEDREAM_3_I2I_DISABLED_REASON : undefined,
+                        }]
+                        : [];
+                    return [...nonAutoModels, ...mergedSeedream3];
+                }
+                return p.models;
+            })(),
         })).filter(g => g.models.length > 0);
-    }, [currentProvider, isImageGenNode, isVideoGenNode, viduModeForModelFilter]);
+    }, [currentProvider, isImageGenNode, isVideoGenNode, viduModeForModelFilter, inputAssets]);
     const videoResolutionOptions = useMemo(
         () => isVideoGenNode ? getVideoResolutions(node.data.model, inferredVideoMode) : [],
         [isVideoGenNode, node.data.model, inferredVideoMode]
@@ -283,6 +405,17 @@ const NodeComponent: React.FC<NodeProps> = ({
         () => isVideoGenNode ? getDefaultDuration(node.data.model, inferredVideoMode) : 5,
         [isVideoGenNode, node.data.model, inferredVideoMode]
     );
+
+    // Seedream 3.0 在图生图场景不可用：自动切到 4.5，避免触发不可用模型
+    useEffect(() => {
+        if (!isImageGenNode) return;
+        const currentModel = node.data.model || '';
+        if (!isSeedream3AutoPair(currentModel)) return;
+        const hasUpstreamImageInputs = (inputAssets || []).some(asset => asset.type === 'image');
+        const expectedModel = hasUpstreamImageInputs ? SEEDREAM_45_MODEL : SEEDREAM_30_T2I_MODEL;
+        if (expectedModel === currentModel) return;
+        onUpdate(node.id, { model: expectedModel });
+    }, [isImageGenNode, node.data.model, node.id, onUpdate, inputAssets]);
 
     // Vidu 模式切换时，若当前模型不支持新模式则自动切换到第一个可用模型
     useEffect(() => {
@@ -374,7 +507,12 @@ const NodeComponent: React.FC<NodeProps> = ({
         isResizingInput.current = true; inputStartDragY.current = e.clientY; inputStartHeight.current = inputHeight;
         const handleGlobalMouseMove = (e: MouseEvent) => {
             if (!isResizingInput.current) return;
-            setInputHeight(Math.max(48, Math.min(inputStartHeight.current + (e.clientY - inputStartDragY.current), 300)));
+            setInputHeight(
+                Math.max(
+                    CONFIG_PROMPT_MIN_HEIGHT,
+                    Math.min(inputStartHeight.current + (e.clientY - inputStartDragY.current), CONFIG_PROMPT_MAX_HEIGHT)
+                )
+            );
         };
         const handleGlobalMouseUp = () => { isResizingInput.current = false; window.removeEventListener('mousemove', handleGlobalMouseMove); window.removeEventListener('mouseup', handleGlobalMouseUp); };
         window.addEventListener('mousemove', handleGlobalMouseMove); window.addEventListener('mouseup', handleGlobalMouseUp);
@@ -481,7 +619,17 @@ const NodeComponent: React.FC<NodeProps> = ({
         if (onExpand && mediaRef.current) {
             const rect = mediaRef.current.getBoundingClientRect();
             if (node.type.includes('IMAGE') && node.data.image) {
-                onExpand({ type: 'image', src: node.data.image, rect, images: node.data.images || [node.data.image], initialIndex: (node.data.images || [node.data.image]).indexOf(node.data.image) });
+                onExpand({
+                    type: 'image',
+                    src: node.data.image,
+                    rect,
+                    images: node.data.images || [node.data.image],
+                    initialIndex: (node.data.images || [node.data.image]).indexOf(node.data.image),
+                    nodeId: node.id,
+                    originalImage: node.data.originalImage,
+                    canvasData: node.data.canvasData,
+                    editOriginImage: node.data.editOriginImage,
+                });
             } else if (node.type.includes('VIDEO') && node.data.videoUri) {
                 const src = node.data.videoUri;
                 const videos = node.data.videoUris && node.data.videoUris.length > 0 ? node.data.videoUris : [src];
@@ -527,7 +675,7 @@ const NodeComponent: React.FC<NodeProps> = ({
     const handleEdit = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (onEdit && node.data.image) {
-            onEdit(node.id, node.data.image, node.data.originalImage, node.data.canvasData);
+            onEdit(node.id, node.data.image, node.data.originalImage, node.data.canvasData, node.data.editOriginImage);
         }
     };
     const handleCreateSubject = (e: React.MouseEvent) => {
@@ -684,9 +832,10 @@ const NodeComponent: React.FC<NodeProps> = ({
         if (node.type === NodeType.MULTI_FRAME_VIDEO) {
             return Math.round((node.width || DEFAULT_NODE_WIDTH) * 9 / 16);
         }
-        // 提示词节点和素材节点：默认 16:9 比例
+        // 文本节点默认 9:16，素材节点默认 16:9
         if (node.type === NodeType.PROMPT_INPUT || node.type === NodeType.IMAGE_ASSET || node.type === NodeType.VIDEO_ASSET) {
-            const ratio = node.data.aspectRatio || '16:9';
+            const defaultRatio = node.type === NodeType.PROMPT_INPUT ? '9:16' : '16:9';
+            const ratio = node.data.aspectRatio || defaultRatio;
             const [w, h] = ratio.split(':').map(Number);
             return (node.width || DEFAULT_NODE_WIDTH) * h / w;
         }
@@ -696,7 +845,6 @@ const NodeComponent: React.FC<NodeProps> = ({
     };
     const nodeHeight = getNodeHeight();
     const nodeWidth = node.width || DEFAULT_NODE_WIDTH;
-    const hasInputs = inputAssets && inputAssets.length > 0;
     const hasFloatingPanel = !suppressFloatingPanels && (isSelected || isHovered || isInputFocused);
     const showPorts = !suppressPorts && (isSelected || isHovered);
 
@@ -766,6 +914,59 @@ const NodeComponent: React.FC<NodeProps> = ({
                             <div className="w-px h-6 bg-slate-300 dark:bg-slate-600 mx-1" />
                         </>
                     )}
+                    {/* 文本节点：字号/颜色控制 */}
+                    {node.type === NodeType.PROMPT_INPUT && (() => {
+                        const textStyle = node.data.textStyle || {};
+                        const currentFontSize = textStyle.fontSize || 12;
+                        const currentColor = textStyle.color || '';
+                        const fontSizes = [
+                            { label: 'S', value: 10 },
+                            { label: 'M', value: 12 },
+                            { label: 'L', value: 16 },
+                            { label: 'XL', value: 24 },
+                        ];
+                        const textColors = [
+                            { value: '', style: 'bg-slate-700 dark:bg-slate-200' },
+                            { value: '#ef4444', style: 'bg-red-500' },
+                            { value: '#f97316', style: 'bg-orange-500' },
+                            { value: '#22c55e', style: 'bg-green-500' },
+                            { value: '#3b82f6', style: 'bg-blue-500' },
+                            { value: '#a855f7', style: 'bg-purple-500' },
+                            { value: '#ffffff', style: 'bg-white border border-slate-300 dark:border-slate-500' },
+                        ];
+                        return (
+                            <>
+                                <div className="flex items-center gap-0.5">
+                                    {fontSizes.map(fs => (
+                                        <button
+                                            key={fs.value}
+                                            onClick={() => onUpdate(node.id, { textStyle: { ...textStyle, fontSize: fs.value } })}
+                                            className={`px-1.5 py-1 rounded-lg text-[10px] font-bold transition-all ${currentFontSize === fs.value
+                                                ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400'
+                                                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+                                            }`}
+                                        >
+                                            {fs.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="w-px h-5 bg-slate-300 dark:bg-slate-600 mx-0.5" />
+                                <div className="flex items-center gap-0.5">
+                                    {textColors.map(tc => (
+                                        <button
+                                            key={tc.value || 'default'}
+                                            onClick={() => onUpdate(node.id, { textStyle: { ...textStyle, color: tc.value } })}
+                                            className={`w-4 h-4 rounded-full ${tc.style} transition-all ${currentColor === tc.value
+                                                ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-white dark:ring-offset-slate-800 scale-110'
+                                                : 'hover:scale-110'
+                                            }`}
+                                        />
+                                    ))}
+                                </div>
+                                <div className="w-px h-5 bg-slate-300 dark:bg-slate-600 mx-0.5" />
+                            </>
+                        );
+                    })()}
                     {isWorking && (
                         <div className="p-2 rounded-xl text-blue-500 dark:text-blue-300 bg-slate-100 dark:bg-slate-700">
                             <Loader2 className="animate-spin w-3.5 h-3.5" />
@@ -799,43 +1000,45 @@ const NodeComponent: React.FC<NodeProps> = ({
 
     const renderMediaContent = () => {
         if (node.type === NodeType.PROMPT_INPUT) {
-            // 提示词节点：文本输入框 + 结果展示，悬停弹出配置框
+            // 文本节点：纯文本编辑
             const hasContent = localPrompt && localPrompt.trim().length > 0;
-            // 检查是否有上游媒体素材
-            const hasUpstreamMedia = inputAssets && inputAssets.length > 0;
-            const promptAreaHeight = Math.max(PROMPT_CONTENT_MIN_HEIGHT, Math.min(promptContentHeight, nodeHeight - PROMPT_NODE_CHROME_HEIGHT));
-            const promptPlaceholder = hasUpstreamMedia
-                ? "分析/优化结果将在此显示...\n\n双击节点可编辑，或通过下方配置框触发 AI 处理。"
-                : "在此输入或编辑您的提示词...\n\n双击节点进入编辑，或通过下方配置框让 AI 优化。";
+            const promptPlaceholder = "在此输入文本内容...\n\n双击节点进入编辑。";
+            const fontSize = node.data.textStyle?.fontSize || 12;
+            const textColor = node.data.textStyle?.color || '';
+            const fontSizeClass = fontSize <= 10 ? 'text-[10px]' : fontSize <= 12 ? 'text-xs' : fontSize <= 14 ? 'text-sm' : fontSize <= 16 ? 'text-base' : fontSize <= 20 ? 'text-lg' : 'text-xl';
 
             return (
                 <div className="w-full h-full p-3 flex flex-col gap-2 group/text bg-amber-50/50 dark:bg-amber-900/10 rounded-[16px] border border-amber-200/50 dark:border-amber-700/30 relative overflow-hidden hover:border-amber-300 dark:hover:border-amber-600 focus-within:border-amber-400 dark:focus-within:border-amber-500 transition-colors">
-                    <div className="relative group/prompt-input overflow-hidden" style={{ height: `${promptAreaHeight}px` }}>
+                    <div className="relative flex-1 min-h-0 group/prompt-input overflow-hidden">
                         {enableSubjectMentions && (
                             <SubjectHighlighter
                                 text={localPrompt}
                                 subjects={subjects || []}
-                                className="absolute inset-0 p-3 text-xs font-medium leading-relaxed overflow-hidden"
+                                scrollTop={promptScrollOffset.top}
+                                scrollLeft={promptScrollOffset.left}
+                                className={`absolute inset-0 p-3 ${fontSizeClass} font-medium leading-relaxed overflow-hidden`}
                             />
                         )}
                         {isPromptEditing ? (
                             <>
                                 <textarea
                                     ref={promptTextareaRef}
-                                    className="w-full h-full bg-transparent resize-none focus:outline-none text-xs text-slate-700 dark:text-slate-200 placeholder-slate-400/60 dark:placeholder-slate-500/60 p-3 font-medium leading-relaxed custom-scrollbar relative z-10"
+                                    className={`w-full h-full bg-transparent resize-none focus:outline-none ${fontSizeClass} text-slate-700 dark:text-slate-200 placeholder-slate-400/60 dark:placeholder-slate-500/60 p-3 font-medium leading-relaxed custom-scrollbar relative z-10`}
+                                    style={{ color: textColor || undefined }}
                                     placeholder={promptPlaceholder}
                                     value={localPrompt}
                                     onChange={(e) => setLocalPrompt(e.target.value)}
                                     onBlur={() => { commitPrompt(); setIsPromptEditing(false); setIsInputFocused(false); }}
                                     onKeyDown={(e) => {
-                                        handleCmdEnter(e);
-                                        if (e.key === 'Escape') {
+                                        if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
                                             e.preventDefault();
+                                            commitPrompt();
                                             setIsPromptEditing(false);
                                             (e.target as HTMLTextAreaElement).blur();
                                         }
                                     }}
                                     onFocus={() => setIsInputFocused(true)}
+                                    onScroll={enableSubjectMentions ? handlePromptScroll : undefined}
                                     onWheel={(e) => e.stopPropagation()}
                                     onMouseDown={(e) => e.stopPropagation()}
                                     onDoubleClick={(e) => e.stopPropagation()}
@@ -846,11 +1049,15 @@ const NodeComponent: React.FC<NodeProps> = ({
                                         textareaRef={promptTextareaRef}
                                         value={localPrompt}
                                         onChange={setLocalPrompt}
+                                        getDisabledReason={getSubjectMentionDisabledReason}
                                     />
                                 )}
                             </>
                         ) : (
-                            <div className="w-full h-full p-3 text-xs text-slate-700 dark:text-slate-200 font-medium leading-relaxed whitespace-pre-wrap break-words overflow-auto custom-scrollbar cursor-text">
+                            <div
+                                className={`w-full h-full p-3 ${fontSizeClass} text-slate-700 dark:text-slate-200 font-medium leading-relaxed whitespace-pre-wrap break-words overflow-auto custom-scrollbar cursor-text`}
+                                style={{ color: textColor || undefined }}
+                            >
                                 {hasContent ? localPrompt : (
                                     <span className="text-slate-400/70 dark:text-slate-500/70">{promptPlaceholder}</span>
                                 )}
@@ -865,34 +1072,22 @@ const NodeComponent: React.FC<NodeProps> = ({
                                 <Copy size={12} />
                             </button>
                         )}
-                        <div
-                            className="absolute bottom-0 left-0 w-full h-3 cursor-row-resize flex items-center justify-center opacity-0 group-hover/prompt-input:opacity-100 transition-opacity z-20"
-                            onMouseDown={handlePromptContentResizeStart}
-                        >
-                            <div className="w-8 h-1 rounded-full bg-slate-100 dark:bg-slate-700 group-hover/prompt-input:bg-slate-200 dark:group-hover/prompt-input:bg-slate-600" />
-                        </div>
                     </div>
                     {/* 底部字数统计 */}
                     <div className="flex items-center justify-between px-2">
                         <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold">
                             {localPrompt.length > 0 ? `${localPrompt.length} 字` : ''}
                         </span>
-                        {hasUpstreamMedia && (
-                            <span className="text-[10px] text-green-500 dark:text-green-400 font-bold flex items-center gap-1">
-                                <FileSearch size={10} />
-                                已连接素材
-                            </span>
-                        )}
                     </div>
-                    {/* 加载遮罩 */}
-                    {isWorking && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-10 rounded-[24px]">
-                            <div className="flex flex-col items-center gap-2">
-                                <Loader2 className="animate-spin text-amber-500 dark:text-amber-400" size={28} />
-                                <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                                    {hasUpstreamMedia ? 'AI 正在分析素材...' : 'AI 正在优化提示词...'}
-                                </span>
-                            </div>
+                    {/* 错误状态 */}
+                    {node.status === NodeStatus.ERROR && (
+                        <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20 rounded-[16px]">
+                            <AlertCircle className="text-red-500 mb-2" size={24} />
+                            <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed max-h-[60%] overflow-y-auto">{node.data.error || '操作失败'}</span>
+                            <button
+                                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                            >关闭</button>
                         </div>
                     )}
                 </div>
@@ -945,7 +1140,11 @@ const NodeComponent: React.FC<NodeProps> = ({
                         {node.status === NodeStatus.ERROR && (
                             <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20">
                                 <AlertCircle className="text-red-500 mb-2" size={24} />
-                                <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed">{node.data.error}</span>
+                                <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed max-h-[60%] overflow-y-auto">{node.data.error || '操作失败'}</span>
+                                <button
+                                    className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                    onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                                >关闭</button>
                             </div>
                         )}
                     </div>
@@ -1062,7 +1261,11 @@ const NodeComponent: React.FC<NodeProps> = ({
                     {node.status === NodeStatus.ERROR && (
                         <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20">
                             <AlertCircle className="text-red-500 mb-2" size={24} />
-                            <span className="text-[10px] text-red-500 leading-relaxed">{node.data.error}</span>
+                            <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed max-h-[60%] overflow-y-auto">{node.data.error || '操作失败'}</span>
+                            <button
+                                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                            >关闭</button>
                         </div>
                     )}
                 </div>
@@ -1107,8 +1310,9 @@ const NodeComponent: React.FC<NodeProps> = ({
                     try {
                         const url = useFallback ? objectUrl : await onUploadImageFile(file);
                         onUpdate(node.id, { image: url, aspectRatio }, { width: newWidth, height: newHeight });
-                    } catch (error) {
+                    } catch (error: any) {
                         console.warn('[Node] Image upload failed:', error);
+                        onUpdate(node.id, { error: error?.message || '图片上传失败' });
                     } finally {
                         if (!useFallback) {
                             URL.revokeObjectURL(objectUrl);
@@ -1151,6 +1355,17 @@ const NodeComponent: React.FC<NodeProps> = ({
                             </button>
                             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
                         </>
+                    )}
+                    {/* 错误状态 */}
+                    {(node.status === NodeStatus.ERROR || node.data.error) && (
+                        <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20">
+                            <AlertCircle className="text-red-500 mb-2" size={24} />
+                            <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed">{node.data.error || '上传失败'}</span>
+                            <button
+                                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                            >关闭</button>
+                        </div>
                     )}
                 </div>
             );
@@ -1196,8 +1411,9 @@ const NodeComponent: React.FC<NodeProps> = ({
                     try {
                         const url = useFallback ? objectUrl : await onUploadVideoFile(file);
                         onUpdate(node.id, { videoUri: url, ...(aspectRatio ? { aspectRatio } : {}) }, newHeight ? { height: newHeight } : undefined);
-                    } catch (error) {
+                    } catch (error: any) {
                         console.warn('[Node] Video upload failed:', error);
+                        onUpdate(node.id, { error: error?.message || '视频上传失败' });
                     } finally {
                         if (!useFallback) {
                             URL.revokeObjectURL(objectUrl);
@@ -1241,6 +1457,17 @@ const NodeComponent: React.FC<NodeProps> = ({
                             </button>
                             <input type="file" ref={fileInputRef} className="hidden" accept="video/*" onChange={handleVideoUpload} />
                         </>
+                    )}
+                    {/* 错误状态 */}
+                    {(node.status === NodeStatus.ERROR || node.data.error) && (
+                        <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20">
+                            <AlertCircle className="text-red-500 mb-2" size={24} />
+                            <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed">{node.data.error || '上传失败'}</span>
+                            <button
+                                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                            >关闭</button>
+                        </div>
                     )}
                 </div>
             );
@@ -1301,7 +1528,11 @@ const NodeComponent: React.FC<NodeProps> = ({
                     {node.status === NodeStatus.ERROR && (
                         <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20">
                             <AlertCircle className="text-red-500 mb-2" size={24} />
-                            <span className="text-[10px] text-red-500 leading-relaxed">{node.data.error}</span>
+                            <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed max-h-[60%] overflow-y-auto">{node.data.error || '生成失败'}</span>
+                            <button
+                                className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                            >关闭</button>
                         </div>
                     )}
                 </div>
@@ -1532,24 +1763,36 @@ const NodeComponent: React.FC<NodeProps> = ({
                                 style={{ filter: showImageGrid ? 'blur(10px)' : 'none' }} // Pass Style
                             />
                         )}
-                        {/* 组图数量徽章 - 右上角显示 */}
-                        {node.data.images && node.data.images.length > 1 && !showImageGrid && (
-                            <button
-                                className="absolute z-30 flex items-center gap-1.5 px-2.5 py-1.5 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg hover:bg-white dark:hover:bg-slate-700 hover:shadow-xl hover:scale-105 transition-all duration-200 cursor-pointer group/badge"
-                                style={{
-                                    top: `${12 * inverseScale}px`,
-                                    right: `${12 * inverseScale}px`,
-                                    transform: `scale(${inverseScale})`,
-                                    transformOrigin: 'top right'
-                                }}
-                                onClick={(e) => { e.stopPropagation(); setShowImageGrid(true); }}
-                                title="点击查看全部结果"
-                            >
-                                <Grid3X3 size={12} className="text-slate-500 dark:text-slate-400 group-hover/badge:text-blue-500 dark:group-hover/badge:text-blue-400" />
-                                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 group-hover/badge:text-blue-600 dark:group-hover/badge:text-blue-300">{node.data.images.length}</span>
-                            </button>
+                        {/* 组图数量徽章 - 右上角显示（图片或视频组） */}
+                        {(() => {
+                            const badgeItems = node.data.images || node.data.videoUris || [];
+                            return badgeItems.length > 1 && !showImageGrid && (
+                                <button
+                                    className="absolute z-30 flex items-center gap-1.5 px-2.5 py-1.5 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg hover:bg-white dark:hover:bg-slate-700 hover:shadow-xl hover:scale-105 transition-all duration-200 cursor-pointer group/badge"
+                                    style={{
+                                        top: `${12 * inverseScale}px`,
+                                        right: `${12 * inverseScale}px`,
+                                        transform: `scale(${inverseScale})`,
+                                        transformOrigin: 'top right'
+                                    }}
+                                    onClick={(e) => { e.stopPropagation(); setShowImageGrid(true); }}
+                                    title="点击查看全部结果"
+                                >
+                                    <Grid3X3 size={12} className="text-slate-500 dark:text-slate-400 group-hover/badge:text-blue-500 dark:group-hover/badge:text-blue-400" />
+                                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300 group-hover/badge:text-blue-600 dark:group-hover/badge:text-blue-300">{badgeItems.length}</span>
+                                </button>
+                            );
+                        })()}
+                        {node.status === NodeStatus.ERROR && (
+                            <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-4 text-center z-20">
+                                <AlertCircle className="text-red-500 mb-2" size={24} />
+                                <span className="text-[10px] text-red-500 dark:text-red-400 leading-relaxed max-h-[60%] overflow-y-auto">{node.data.error || '生成失败'}</span>
+                                <button
+                                    className="mt-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 underline"
+                                    onClick={(e) => { e.stopPropagation(); onUpdate(node.id, { error: undefined }); }}
+                                >关闭</button>
+                            </div>
                         )}
-                        {node.status === NodeStatus.ERROR && <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-20"><AlertCircle className="text-red-500 mb-2" /><span className="text-xs text-red-200">{node.data.error}</span></div>}
                     </>
                 )}
             </div>
@@ -1559,8 +1802,6 @@ const NodeComponent: React.FC<NodeProps> = ({
     // 复制状态 - 必须在组件顶层声明
     const [promptCopied, setPromptCopied] = useState(false);
 
-    // 提示词节点的需求输入状态
-    const [promptRequest, setPromptRequest] = useState(node.data.userInput || '');
 
     // 多帧视频节点的文件输入引用
     const multiFrameFileInputRef = useRef<HTMLInputElement>(null);
@@ -1591,8 +1832,9 @@ const NodeComponent: React.FC<NodeProps> = ({
             const hasInputImage = !!(inputAssets?.[0]?.src || node.data.image);
 
             return (
-                <div data-config-panel className={`absolute top-full left-1/2 w-[98%] z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
+                <div data-config-panel className={`absolute top-full left-1/2 z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
                     style={{
+                        width: `${FIXED_CONFIG_PANEL_WIDTH}px`,
                         paddingTop: `${8 * inverseScale}px`,
                         transform: `translateX(-50%) scale(${inverseScale})`,
                         transformOrigin: 'top center'
@@ -1619,96 +1861,9 @@ const NodeComponent: React.FC<NodeProps> = ({
             );
         }
 
-        // 提示词节点：专用配置框
+        // 文本节点：无底部配置面板
         if (node.type === NodeType.PROMPT_INPUT) {
-            const hasUpstreamMedia = inputAssets && inputAssets.length > 0;
-            const models = [
-                { l: 'Gemini 2.5 Flash', v: 'gemini-2.5-flash' },
-                { l: 'Gemini 2.5 Pro', v: 'gemini-2.5-pro' },
-            ];
-            const currentModel = node.data.model || 'gemini-2.5-flash';
-            const currentModelLabel = models.find(m => m.v === currentModel)?.l || 'Gemini 2.5 Flash';
-
-            const handleExecute = () => {
-                if (isWorking) return;
-                // 先保存节点内文本到 prompt，再保存需求到 userInput，最后触发 action
-                onUpdate(node.id, { prompt: localPrompt, userInput: promptRequest });
-                onAction(node.id, promptRequest);
-            };
-
-            return (
-                <div data-config-panel className={`absolute top-full left-1/2 w-[98%] z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
-                    style={{
-                        paddingTop: `${8 * inverseScale}px`,
-                        transform: `translateX(-50%) scale(${inverseScale})`,
-                        transformOrigin: 'top center'
-                    }}
-                >
-                    <div className={`w-full rounded-[20px] p-1 flex flex-col gap-1 ${GLASS_PANEL} relative z-[100]`} onMouseDown={e => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
-                        <div className="relative group/input bg-white dark:bg-slate-800 rounded-[16px] flex flex-col overflow-hidden">
-                            <textarea
-                                className="w-full bg-transparent text-xs text-slate-700 dark:text-slate-200 placeholder-slate-500/60 dark:placeholder-slate-400/60 p-3 focus:outline-none resize-none custom-scrollbar font-medium leading-relaxed"
-                                style={{ height: `${Math.min(inputHeight, 200)}px` }}
-                                placeholder={hasUpstreamMedia
-                                    ? "输入分析需求（可选）...\n如「这是什么风格」「描述画面内容用于复刻」\n置空时生成详细描述"
-                                    : "输入优化需求（可选）...\n如「优化为高质量视频提示词」「扩写更多细节」"}
-                                value={promptRequest}
-                                onChange={(e) => setPromptRequest(e.target.value)}
-                                onBlur={() => setIsInputFocused(false)}
-                                onKeyDown={(e) => {
-                                    const nativeEvent = e.nativeEvent as KeyboardEvent;
-                                    if (nativeEvent.isComposing) return;
-                                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
-                                        e.preventDefault();
-                                        handleExecute();
-                                    }
-                                }}
-                                onFocus={() => setIsInputFocused(true)}
-                                onMouseDown={e => e.stopPropagation()}
-                                readOnly={isWorking}
-                            />
-                            <div className="absolute bottom-0 left-0 w-full h-3 cursor-row-resize flex items-center justify-center opacity-0 group-hover/input:opacity-100 transition-opacity" onMouseDown={handleInputResizeStart}><div className="w-8 h-1 rounded-full bg-slate-100 dark:bg-slate-700 group-hover/input:bg-slate-200 dark:group-hover/input:bg-slate-600" /></div>
-                        </div>
-                        <div className="flex items-center justify-between px-2 pb-1 pt-1 relative z-20">
-                            <div className="flex items-center gap-2">
-                                {/* 模型选择 */}
-                                <div className="relative group/model">
-                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer transition-colors text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:text-amber-500 dark:hover:text-amber-400">
-                                        <span>{currentModelLabel}</span>
-                                        <ChevronDown size={10} />
-                                    </div>
-                                    <div className="absolute bottom-full left-0 pb-2 w-40 opacity-0 translate-y-2 pointer-events-none group-hover/model:opacity-100 group-hover/model:translate-y-0 group-hover/model:pointer-events-auto transition-all duration-200 z-[200]">
-                                        <div className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden">
-                                            {models.map(m => (
-                                                <div key={m.v} onClick={() => onUpdate(node.id, { model: m.v })} className={`px-3 py-2 text-[10px] font-bold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 ${node.data.model === m.v ? 'text-amber-500 dark:text-amber-400 bg-slate-50 dark:bg-slate-700' : 'text-slate-600 dark:text-slate-300'}`}>{m.l}</div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                                {/* 素材状态指示 */}
-                                {hasUpstreamMedia && (
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30">
-                                        已连接素材
-                                    </span>
-                                )}
-                            </div>
-                            {/* 执行按钮 */}
-                            <button
-                                onClick={handleExecute}
-                                disabled={isWorking || (!hasUpstreamMedia && !localPrompt.trim())}
-                                title={isWorking ? '处理中...' : 'AI 执行（⌘/Ctrl + Enter）'}
-                                className={`flex items-center gap-1.5 px-4 py-1.5 rounded-[12px] font-bold text-[10px] tracking-wide transition-all duration-300 ${isWorking
-                                    ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-amber-400 to-yellow-500 text-black hover:shadow-lg hover:shadow-amber-500/20 hover:scale-105 active:scale-95'
-                                    }`}
-                            >
-                                {isWorking ? <Loader2 className="animate-spin" size={12} /> : <Wand2 size={12} />}
-                                <span>{isWorking ? '处理中...' : 'AI 执行'}</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
+            return null;
         }
 
         // 音频节点使用专用面板
@@ -1903,8 +2058,8 @@ const NodeComponent: React.FC<NodeProps> = ({
             if (hasResult) {
                 const viduModelLabel = viduModel === 'viduq2-turbo' ? 'Vidu Turbo' : 'Vidu Pro';
                 return (
-                    <div className={`absolute top-full left-1/2 w-[98%] z-50 transition-all duration-500 ${isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
-                        style={{ paddingTop: `${8 * inverseScale}px`, transform: `translateX(-50%) scale(${inverseScale})`, transformOrigin: 'top center' }}
+                    <div className={`absolute top-full left-1/2 z-50 transition-all duration-500 ${isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
+                        style={{ width: `${FIXED_CONFIG_PANEL_WIDTH}px`, paddingTop: `${8 * inverseScale}px`, transform: `translateX(-50%) scale(${inverseScale})`, transformOrigin: 'top center' }}
                     >
                         <div className={`rounded-[20px] p-1 ${GLASS_PANEL}`} onMouseDown={e => e.stopPropagation()}>
                             <div className="bg-white dark:bg-slate-800 rounded-[16px] p-3">
@@ -1925,8 +2080,8 @@ const NodeComponent: React.FC<NodeProps> = ({
             const isEditingTransition = editingFrame && editingFrameIndex < frames.length - 1;
 
             return (
-                <div data-config-panel className={`absolute top-full left-1/2 w-[98%] z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
-                    style={{ paddingTop: `${8 * inverseScale}px`, transform: `translateX(-50%) scale(${inverseScale})`, transformOrigin: 'top center' }}
+                <div data-config-panel className={`absolute top-full left-1/2 z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
+                    style={{ width: `${FIXED_CONFIG_PANEL_WIDTH}px`, paddingTop: `${8 * inverseScale}px`, transform: `translateX(-50%) scale(${inverseScale})`, transformOrigin: 'top center' }}
                 >
                     <div className={`w-full rounded-[20px] p-1 flex flex-col gap-1 ${GLASS_PANEL} relative z-[100]`} onMouseDown={e => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
                         <div className="relative group/input bg-white dark:bg-slate-800 rounded-[16px] flex flex-col overflow-hidden">
@@ -2089,15 +2244,26 @@ const NodeComponent: React.FC<NodeProps> = ({
         const hasMediaResult = !!(node.data.image || node.data.videoUri);
         if (hasMediaResult && !isEditingResult && !isVideoGenNode && !isImageGenNode) {
             const promptText = node.data.prompt || '';
-            const MODEL_LABELS: Record<string, string> = { 'doubao-seedream-4-5-251128': 'Seedream 4.5', 'nano-banana': 'Nano Banana', 'nano-banana-2': 'Nano Banana 2','veo3.1': 'Veo 3.1', 'veo3.1-pro': 'Veo 3.1 Pro', 'doubao-seedance-1-5-pro-251215': 'Seedance 1.5' };
+            const MODEL_LABELS: Record<string, string> = {
+                'doubao-seedream-5-0-260128': 'Seedream 5.0 Lite',
+                'doubao-seedream-4-5-251128': 'Seedream 4.5',
+                'doubao-seedream-3-0-t2i-250415': 'Seedream 3.0',
+                'doubao-seededit-3-0-i2i-250628': 'Seedream 3.0',
+                'nano-banana': 'Nano Banana',
+                'nano-banana-2': 'Nano Banana 2',
+                'veo3.1': 'Veo 3.1',
+                'veo3.1-pro': 'Veo 3.1 Pro',
+                'doubao-seedance-1-5-pro-251215': 'Seedance 1.5',
+            };
             const modelName = MODEL_LABELS[node.data.model || ''] || node.data.model || '默认';
             const tags = [node.data.aspectRatio, node.data.resolution].filter(Boolean);
 
             const handleCopy = () => { navigator.clipboard.writeText(promptText); setPromptCopied(true); setTimeout(() => setPromptCopied(false), 1500); };
 
             return (
-                <div className={`absolute top-full left-1/2 w-[98%] z-50 transition-all duration-500 ${isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
+                <div className={`absolute top-full left-1/2 z-50 transition-all duration-500 ${isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
                     style={{
+                        width: `${FIXED_CONFIG_PANEL_WIDTH}px`,
                         paddingTop: `${8 * inverseScale}px`,
                         transform: `translateX(-50%) scale(${inverseScale})`,
                         transformOrigin: 'top center'
@@ -2128,18 +2294,23 @@ const NodeComponent: React.FC<NodeProps> = ({
         // 在所有分组中查找当前模型显示名称
         const currentModelLabel = allModelsGrouped
             .flatMap(g => g.models.map(m => ({ id: m.id, name: m.name })))
-            .find(m => m.id === node.data.model)?.name || currentProvider?.name || 'AI Model';
+            .find(m => m.id === node.data.model)?.name
+            || (isSeedream3AutoPair(node.data.model) ? 'Seedream 3.0' : undefined)
+            || currentProvider?.name
+            || 'AI Model';
 
         // 剧情延展模式：底部缩略图显示已选取的关键帧而非上游视频
         const isCutOrContinueMode = node.type === NodeType.VIDEO_FACTORY && (generationMode === 'CUT' || generationMode === 'CONTINUE');
+        const showMergedReferencePreview = isViduVideoNode && viduReferencePreviewAssets.length > 0;
         const thumbnailAssets: InputAsset[] = isCutOrContinueMode && node.data.croppedFrame
             ? [{ id: 'croppedFrame', type: 'image', src: node.data.croppedFrame }]
-            : (inputAssets || []);
-        const showThumbnails = isCutOrContinueMode ? !!node.data.croppedFrame : hasInputs;
+            : (showMergedReferencePreview ? viduReferencePreviewAssets : (inputAssets || []));
+        const showThumbnails = thumbnailAssets.length > 0;
 
         return (
-            <div data-config-panel className={`absolute top-full left-1/2 w-[98%] z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
+            <div data-config-panel className={`absolute top-full left-1/2 z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? `opacity-100 translate-y-0 scale-100` : 'opacity-0 translate-y-[-10px] scale-95 pointer-events-none'}`}
                 style={{
+                    width: `${FIXED_CONFIG_PANEL_WIDTH}px`,
                     paddingTop: `${8 * inverseScale}px`,
                     transform: `translateX(-50%) scale(${inverseScale})`,
                     transformOrigin: 'top center'
@@ -2149,14 +2320,26 @@ const NodeComponent: React.FC<NodeProps> = ({
                 <div className={`w-full rounded-[20px] p-1 flex flex-col gap-1 ${GLASS_PANEL} relative z-[100]`} onMouseDown={e => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
                     <div className="relative group/input bg-white dark:bg-slate-800 rounded-[16px] flex flex-col">
                         {/* InputThumbnails: CUT/CONTINUE显示croppedFrame，其他模式显示上游输入 */}
-                        {showThumbnails && (<div className="w-full px-1 pt-1 z-10"><InputThumbnails assets={thumbnailAssets} onReorder={isCutOrContinueMode ? () => { } : (newOrder) => onInputReorder?.(node.id, newOrder)} /></div>)}
+                        {showThumbnails && (<div className="w-full px-1 pt-1 z-10"><InputThumbnails assets={thumbnailAssets} onReorder={(isCutOrContinueMode || showMergedReferencePreview) ? () => { } : (newOrder) => onInputReorder?.(node.id, newOrder)} /></div>)}
+                        {showMergedReferencePreview && viduReferenceUsage && (
+                            <div className="px-3 pb-1 text-[10px] text-slate-500 dark:text-slate-400">
+                                参考图 {viduReferenceUsage.mergedImages.length}/{MAX_VIDU_REFERENCE_IMAGES}
+                                {viduReferenceUsage.isCapped && (
+                                    <span className="ml-1 text-amber-500 dark:text-amber-400">
+                                        超出 {viduReferenceUsage.overflowCount} 张（生成前需精简）
+                                    </span>
+                                )}
+                            </div>
+                        )}
                         {/* @主体 高亮层 + textarea */}
-                        <div className="relative" style={{ height: `${Math.min(inputHeight, 200)}px` }}>
+                        <div className="relative" style={{ height: `${inputHeight}px` }}>
                             {enableSubjectMentions && (
                                 <SubjectHighlighter
                                     text={localPrompt}
                                     subjects={subjects || []}
                                     model={node.data.model}
+                                    scrollTop={promptScrollOffset.top}
+                                    scrollLeft={promptScrollOffset.left}
                                     className="absolute inset-0 p-3 text-xs font-medium leading-relaxed overflow-hidden"
                                 />
                             )}
@@ -2169,6 +2352,8 @@ const NodeComponent: React.FC<NodeProps> = ({
                                 onBlur={() => { setIsInputFocused(false); commitPrompt(); }}
                                 onKeyDown={handleCmdEnter}
                                 onFocus={() => setIsInputFocused(true)}
+                                onScroll={enableSubjectMentions ? handlePromptScroll : undefined}
+                                onWheel={(e) => e.stopPropagation()}
                                 onMouseDown={e => e.stopPropagation()}
                                 readOnly={isWorking}
                             />
@@ -2182,6 +2367,7 @@ const NodeComponent: React.FC<NodeProps> = ({
                                 textareaRef={promptTextareaRef}
                                 value={localPrompt}
                                 onChange={setLocalPrompt}
+                                getDisabledReason={getSubjectMentionDisabledReason}
                             />
                         )}
                     </div>
@@ -2207,9 +2393,12 @@ const NodeComponent: React.FC<NodeProps> = ({
                                         ? 'img2video'
                                         : 'text2video';
                         const effectiveMode: VideoGenerationMode = currentVideoModeOverride === 'auto' ? autoMode : currentVideoModeOverride;
+                        // Vidu 主体参考在生成链路中优先走 reference，这里 UI 显示与真实链路保持一致
+                        const displayMode: VideoGenerationMode = (isViduModel && hasSubjectReferences) ? 'reference' : effectiveMode;
                         const showQuickModeSwitch = canConfigureVideoMode && hasTwoImageInputs && !hasSubjectReferences && !hasFirstLastFrameData;
-                        const quickMode: 'start-end' | 'reference' = effectiveMode === 'reference' ? 'reference' : 'start-end';
-                        const showFirstLastFrameTag = !showQuickModeSwitch && (isFirstLastFrameMode || effectiveMode === 'start-end');
+                        const quickMode: 'start-end' | 'reference' = displayMode === 'reference' ? 'reference' : 'start-end';
+                        const showFirstLastFrameTag = !showQuickModeSwitch && displayMode === 'start-end' && (isFirstLastFrameMode || effectiveMode === 'start-end');
+                        const showReferenceTag = !showQuickModeSwitch && displayMode === 'reference';
 
                         return (
                         <div className="px-3 pb-1">
@@ -2252,6 +2441,11 @@ const NodeComponent: React.FC<NodeProps> = ({
                                             首尾帧
                                         </span>
                                     )}
+                                    {showReferenceTag && (
+                                        <span className="text-[8px] font-bold text-blue-500 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded">
+                                            参考
+                                        </span>
+                                    )}
                                     <ConfigExpandButton
                                         isCollapsed={!isVideoConfigExpanded}
                                         onClick={() => setIsVideoConfigExpanded(!isVideoConfigExpanded)}
@@ -2275,7 +2469,7 @@ const NodeComponent: React.FC<NodeProps> = ({
                                     }
                                 />
                                 {/* 主体选择器 - 仅 Vidu 支持 */}
-                                {currentProvider.id === 'vidu' && subjects && subjects.length > 0 && (
+                                {currentProvider.id === 'vidu' && subjects && subjects.length > 0 && !isStoryContinueMode && (
                                     <div className="mt-2">
                                         <SubjectPicker
                                             subjects={subjects}
@@ -2311,11 +2505,31 @@ const NodeComponent: React.FC<NodeProps> = ({
                                                         <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{group.provider.name}</span>
                                                     </div>
                                                 )}
-                                                {group.models.map(m => (
-                                                    <div key={m.id} onClick={() => onUpdate(node.id, { model: m.id })} className={`px-3 py-2 text-[10px] font-bold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-2 ${node.data.model === m.id ? 'text-blue-400 dark:text-blue-300 bg-slate-50 dark:bg-slate-700' : 'text-slate-600 dark:text-slate-300'}`}>
-                                                        <span>{m.name}</span>
-                                                    </div>
-                                                ))}
+                                                {group.models.map((m) => {
+                                                    const isDisabled = Boolean((m as typeof m & { disabled?: boolean }).disabled);
+                                                    const disabledReason = (m as typeof m & { disabledReason?: string }).disabledReason;
+                                                    return (
+                                                        <div
+                                                            key={m.id}
+                                                            title={isDisabled ? (disabledReason || SEEDREAM_3_I2I_DISABLED_REASON) : undefined}
+                                                            onClick={() => {
+                                                                if (isDisabled) return;
+                                                                onUpdate(node.id, { model: m.id });
+                                                            }}
+                                                            className={`px-3 py-2 text-[10px] font-bold flex items-center gap-2 ${
+                                                                isDisabled
+                                                                    ? 'cursor-not-allowed text-slate-400 dark:text-slate-500 bg-slate-50/60 dark:bg-slate-700/30'
+                                                                    : `cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 ${
+                                                                        node.data.model === m.id
+                                                                            ? 'text-blue-400 dark:text-blue-300 bg-slate-50 dark:bg-slate-700'
+                                                                            : 'text-slate-600 dark:text-slate-300'
+                                                                    }`
+                                                            }`}
+                                                        >
+                                                            <span>{m.name}</span>
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         ))}
                                     </div>
@@ -2739,7 +2953,7 @@ const NodeComponent: React.FC<NodeProps> = ({
                                             )}
                                             <div className="absolute bottom-2 right-2 opacity-0 group-hover/item:opacity-100 transition-opacity bg-black/50 px-2 py-1 rounded-lg flex items-center gap-1">
                                                 <Copy size={10} className="text-white" />
-                                                <span className="text-[9px] text-white font-medium">⌘+拖拽复制</span>
+                                                <span className="text-[9px] text-white font-medium">Ctrl+拖拽复制</span>
                                             </div>
                                         </div>
                                     );
@@ -2789,7 +3003,7 @@ const NodeComponent: React.FC<NodeProps> = ({
                                             )}
                                             <div className="absolute bottom-2 right-2 opacity-0 group-hover/item:opacity-100 transition-opacity bg-black/50 px-2 py-1 rounded-lg flex items-center gap-1">
                                                 <Copy size={10} className="text-white" />
-                                                <span className="text-[9px] text-white font-medium">⌘+拖拽复制</span>
+                                                <span className="text-[9px] text-white font-medium">Ctrl+拖拽复制</span>
                                             </div>
                                         </div>
                                     );

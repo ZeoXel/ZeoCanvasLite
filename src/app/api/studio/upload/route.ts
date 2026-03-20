@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
-import {
-  getStorageProvider,
-  isStorageModeNotImplementedError,
-  resolveUserStoragePrefix,
-  uploadBufferServer,
-  uploadDataUrlServer,
-} from '@/services/storage/serverRuntimeStorage';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
+import { buildMediaPathServer, uploadBufferToCosServer, uploadFromBase64 } from '@/services/cosStorageServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -18,7 +14,7 @@ function getSafePrefix(userId: string, input?: string | null): string {
   if (input && input.startsWith(base)) {
     return input;
   }
-  return resolveUserStoragePrefix('media', userId);
+  return buildMediaPathServer('media', userId);
 }
 
 function getMaxSizeByType(contentType: string): number {
@@ -29,8 +25,11 @@ function getMaxSizeByType(contentType: string): number {
 
 export async function POST(request: Request) {
   try {
-    const userId = 'local-user';
-    const storageProvider = getStorageProvider();
+    const session = await getServerSession(authOptions);
+    const userId = (session?.user as any)?.id as string | undefined;
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     const contentType = request.headers.get('content-type') || '';
 
@@ -43,8 +42,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
       }
 
-      const result = await uploadDataUrlServer(dataUrl, prefix);
-      return NextResponse.json({ record: result, provider: storageProvider });
+      const result = await uploadFromBase64(dataUrl, prefix);
+      return NextResponse.json({ record: result });
     }
 
     const formData = await request.formData();
@@ -63,13 +62,10 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const ext = file.name?.split('.').pop();
-    const result = await uploadBufferServer(buffer, file.type || 'application/octet-stream', prefix, ext);
-    return NextResponse.json({ record: result, provider: storageProvider });
+    const result = await uploadBufferToCosServer(buffer, file.type || 'application/octet-stream', prefix, ext);
+    return NextResponse.json({ record: result });
   } catch (error) {
     console.error('[Studio Upload] Error:', error);
-    if (isStorageModeNotImplementedError(error)) {
-      return NextResponse.json({ error: (error as Error).message }, { status: 501 });
-    }
     return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 }

@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
     Plus, History, X,
     ImageIcon, Video as VideoIcon, Film,
-    Edit, Trash2, Brush, Type,
+    Trash2, Brush, Type,
     Clapperboard, Layers, Sun, Moon,
     Music, Speech, Library, Camera
 } from 'lucide-react';
@@ -181,6 +181,12 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
         return () => window.removeEventListener('click', handleClick);
     }, []);
 
+    const beginCanvasRename = (event: React.MouseEvent, canvasId: string) => {
+        event.stopPropagation();
+        setEditingCanvasId(canvasId);
+        setContextMenu(null);
+    };
+
     const renderPanelContent = () => {
         // 主体库面板
         if (activePanel === 'subjects') {
@@ -300,7 +306,7 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                                         ${currentCanvasId === canvas.id ? 'border-blue-500 dark:border-blue-400 ring-1 ring-blue-500/20 dark:ring-blue-400/20' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'}
                                     `}
                                     onClick={(e) => { e.stopPropagation(); onSelectCanvas(canvas.id); }}
-                                    onDoubleClick={(e) => { e.stopPropagation(); setEditingCanvasId(canvas.id); }}
+                                    onDoubleClick={(e) => beginCanvasRename(e, canvas.id)}
                                     onContextMenu={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
@@ -322,10 +328,25 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                                                 defaultValue={canvas.title}
                                                 autoFocus
                                                 onBlur={(e) => { onRenameCanvas(canvas.id, e.target.value); setEditingCanvasId(null); }}
-                                                onKeyDown={(e) => { if (e.key === 'Enter') { onRenameCanvas(canvas.id, e.currentTarget.value); setEditingCanvasId(null); } }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        onRenameCanvas(canvas.id, e.currentTarget.value);
+                                                        setEditingCanvasId(null);
+                                                    }
+                                                    if (e.key === 'Escape') {
+                                                        setEditingCanvasId(null);
+                                                    }
+                                                }}
                                             />
                                         ) : (
-                                            <span className="text-xs font-medium text-slate-600 dark:text-slate-300 truncate select-none group-hover:text-slate-900 dark:group-hover:text-slate-100 transition-colors">{canvas.title}</span>
+                                            <button
+                                                type="button"
+                                                className="text-left text-xs font-medium text-slate-600 dark:text-slate-300 truncate select-none group-hover:text-slate-900 dark:group-hover:text-slate-100 transition-colors hover:underline underline-offset-2"
+                                                onClick={(e) => beginCanvasRename(e, canvas.id)}
+                                                title="点击重命名画布"
+                                            >
+                                                {canvas.title}
+                                            </button>
                                         )}
                                         <span className="text-[9px] text-slate-400 dark:text-slate-500 font-mono">{canvas.nodes.length} 节点</span>
                                     </div>
@@ -460,9 +481,6 @@ export const SidebarDock: React.FC<SidebarDockProps> = ({
                     )}
                     {contextMenu.type === 'canvas' && (
                         <>
-                            <button className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md flex items-center gap-2" onClick={() => { setEditingCanvasId(contextMenu.id); setContextMenu(null); }}>
-                                <Edit size={12} /> 重命名
-                            </button>
                             <button className="w-full text-left px-3 py-2 text-xs text-red-400 dark:text-red-400 hover:bg-red-500/20 dark:hover:bg-red-500/30 rounded-md flex items-center gap-2" onClick={() => { onDeleteCanvas(contextMenu.id); setContextMenu(null); }}>
                                 <Trash2 size={12} /> 删除
                             </button>

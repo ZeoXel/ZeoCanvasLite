@@ -1,6 +1,13 @@
-import { resolveProviderKey } from '@/lib/ai-client';
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from '@/lib/auth'
+import { ApiKeyService } from '@/lib/services/apikey.service'
 
 export async function getAssignedGatewayKey(provider?: string) {
-  const apiKey = resolveProviderKey(provider);
-  return { userId: 'local-user', apiKey };
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return { userId: null, apiKey: null }
+  }
+
+  const apiKey = await ApiKeyService.getAssignedKeyValueByUserId(session.user.id, provider)
+  return { userId: session.user.id, apiKey }
 }

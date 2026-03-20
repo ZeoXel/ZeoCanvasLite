@@ -10,7 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateImage } from '@/services/providers/image';
-import { SEEDREAM_SIZE_MAP, SEEDREAM_SIZE_MAP_4K } from '@/services/providers';
+import { SEEDREAM_SIZE_MAP, SEEDREAM_SIZE_MAP_4K, SEEDREAM_SIZE_MAP_3_0 } from '@/services/providers';
 import { smartUploadBatchServer, smartUploadServer, buildMediaPathServer } from '@/services/cosStorageServer';
 import { getAssignedGatewayKey } from '@/lib/server/assignedKey';
 
@@ -24,7 +24,13 @@ const REQUEST_DEADLINE_BUFFER_MS = 8_000; // 给平台和序列化预留缓冲
 const MIN_COS_UPLOAD_BUDGET_MS = 18_000;  // 少于该预算时跳过结果转存，避免函数硬超时
 const MIN_GATEWAY_TIMEOUT_MS = 15_000;
 const SEEDREAM_45_MODEL = 'doubao-seedream-4-5-251128';
+const SEEDREAM_30_T2I_MODEL = 'doubao-seedream-3-0-t2i-250415';
+const SEEDEDIT_30_I2I_MODEL = 'doubao-seededit-3-0-i2i-250628';
 const NANO_BANANA_2_MODEL = 'nano-banana-2';
+
+function isSeedreamFamilyModel(model: string): boolean {
+    return model.includes('seedream') || model.includes('seededit');
+}
 
 function estimateBase64Bytes(dataUrl: string): number {
     if (!dataUrl) return 0;
@@ -88,10 +94,7 @@ export async function POST(request: NextRequest) {
         let urls: string[];
 
         console.log('[Studio Image API] Getting assigned gateway key...');
-        const keyProvider = (usedModel.includes('seedream') || usedModel.includes('doubao-seedream'))
-            ? 'seedream'
-            : 'openai';
-        const { userId, apiKey } = await getAssignedGatewayKey(keyProvider);
+        const { userId, apiKey } = await getAssignedGatewayKey();
         console.log('[Studio Image API] Gateway key result:', { userId, hasApiKey: !!apiKey });
 
         if (!userId) {
@@ -104,7 +107,7 @@ export async function POST(request: NextRequest) {
         console.log('[Studio Image API] Gateway base URL:', gatewayBaseUrl);
 
         let resolvedImages = images;
-        const isSeedreamModel = usedModel.includes('seedream') || usedModel.includes('doubao-seedream');
+        const isSeedreamModel = isSeedreamFamilyModel(usedModel);
         const shouldUploadAllInputs = Array.isArray(images) && images.length > 0 && isSeedreamModel;
         const hasOversizedInputs = Array.isArray(images) && images.some(img => isOversizedBase64Image(img));
 
@@ -128,12 +131,16 @@ export async function POST(request: NextRequest) {
             usedModel === NANO_BANANA_2_MODEL
                 ? toNanoImageSize(normalizedResolution) // nano-banana-2 默认显式使用 2K
                 : imageSize;
+        const isSeedream30Series =
+            usedModel === SEEDREAM_30_T2I_MODEL || usedModel === SEEDEDIT_30_I2I_MODEL;
         const resolvedSize = size
             || (
                 isSeedreamModel && aspectRatio
                     ? (
                         usedModel === SEEDREAM_45_MODEL && normalizedResolution === '4k'
                             ? SEEDREAM_SIZE_MAP_4K[aspectRatio]
+                            : isSeedream30Series
+                                ? SEEDREAM_SIZE_MAP_3_0[aspectRatio]
                             : SEEDREAM_SIZE_MAP[aspectRatio]
                     )
                     : undefined

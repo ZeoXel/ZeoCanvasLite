@@ -31,7 +31,7 @@ const buildTargetUrl = (request: NextRequest, path: string[]) => {
 };
 
 const forward = async (request: NextRequest, path: string[]) => {
-  const { apiKey } = await getAssignedGatewayKey('gateway');
+  const { apiKey } = await getAssignedGatewayKey();
   if (!apiKey) {
     return NextResponse.json(
       { error: '未分配可用的API Key' },

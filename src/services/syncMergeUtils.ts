@@ -1,5 +1,5 @@
 import type { AppNode, Canvas, Connection, Group, Subject, Workflow } from '@/types';
-import type { StudioSyncData } from '@/services/studioSyncTypes';
+import type { StudioSyncData } from '@/services/studioSyncService';
 import type { TaskLog } from '@/types/taskLog';
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;

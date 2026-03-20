@@ -91,6 +91,7 @@ export const AudioNodePanel: React.FC<AudioNodePanelProps> = ({
 
     return (
         <div
+            data-config-panel
             className={`absolute top-full left-1/2 w-[98%] z-50 flex flex-col items-center justify-start transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isOpen ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
             style={{
                 paddingTop: `${8 * inverseScale}px`,

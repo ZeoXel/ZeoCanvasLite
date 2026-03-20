@@ -76,7 +76,7 @@ export function getAudioProviders(): ProviderDefinition[] {
 /** 获取菜单结构（用于节点创建菜单） */
 export function getMenuStructure(): MenuCategory[] {
   return [
-    { type: 'PROMPT_INPUT', label: '提示词', icon: 'Type', hasSubmenu: false },
+    { type: 'PROMPT_INPUT', label: '文本', icon: 'Type', hasSubmenu: false },
     { type: 'IMAGE_ASSET', label: '插入图片', icon: 'ImageIcon', hasSubmenu: false },
     { type: 'VIDEO_ASSET', label: '插入视频', icon: 'VideoIcon', hasSubmenu: false },
     { type: 'divider', label: '', icon: '', hasSubmenu: false },

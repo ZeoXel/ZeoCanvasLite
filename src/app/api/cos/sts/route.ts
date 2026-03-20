@@ -4,8 +4,9 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth';
 import * as STS from 'qcloud-cos-sts';
-import { isFeishuStorageMode } from '@/config/runtime-mode';
 
 const config = {
   secretId: process.env.COS_SECRET_ID!,
@@ -34,14 +35,14 @@ const config = {
 
 export async function GET() {
   try {
-    if (isFeishuStorageMode()) {
+    const session = await getServerSession(authOptions);
+    const userId = (session?.user as any)?.id as string | undefined;
+    if (!userId) {
       return NextResponse.json(
-        { error: 'Feishu storage mode does not use COS STS. Adapter implementation is pending.' },
-        { status: 501 }
+        { error: 'Unauthorized' },
+        { status: 401 }
       );
     }
-
-    const userId = 'local-user';
 
     // 配置检查
     if (!config.secretId || !config.secretKey || !config.bucket || !config.region) {

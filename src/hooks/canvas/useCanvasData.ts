@@ -55,10 +55,6 @@ interface UseCanvasDataReturn {
   // Batch operations
   loadData: (data: CanvasDataState) => void;
   clearAll: () => void;
-
-  // Query operations
-  getNodes: () => AppNode[];
-  getConnections: () => Connection[];
 }
 
 // ============================================================================
@@ -341,9 +337,5 @@ export function useCanvasData(
     // Batch operations
     loadData,
     clearAll,
-
-    // Query operations (for CanvasAPI)
-    getNodes: useCallback(() => nodesRef.current, []),
-    getConnections: useCallback(() => connectionsRef.current, []),
   };
 }

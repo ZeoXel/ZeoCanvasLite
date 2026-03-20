@@ -2,7 +2,7 @@
  * 厂商服务共享工具
  */
 
-const DEFAULT_GATEWAY_BASE_URL = 'https://api.lsaigc.com';
+const DEFAULT_GATEWAY_BASE_URL = 'https://your-api-gateway.com';
 
 export const isGatewayProxyBaseUrl = (baseUrl: string) => baseUrl.startsWith('/api/gateway');
 

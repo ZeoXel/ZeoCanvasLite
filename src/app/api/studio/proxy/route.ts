@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
             'prod-ss-vidu',                 // Vidu S3
             'amazonaws.com.cn',             // AWS China S3
             'aliyuncs.com',                 // 阿里云 OSS（Seedream 等）
-            'cos.lsaigc.com',               // 腾讯云 COS（兼容旧存储格式）
+            'your-cos-domain.com',               // 腾讯云 COS（兼容旧存储格式）
             'myqcloud.com',                 // 腾讯云 COS 原始域名
         ];
 

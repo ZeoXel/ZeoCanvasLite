@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
 // POST: 提交生成任务
 export async function POST(request: NextRequest) {
     try {
-        const { apiKey } = await getAssignedGatewayKey('suno');
+        const { apiKey } = await getAssignedGatewayKey();
         if (!apiKey) {
             return NextResponse.json(
                 { code: -1, message: '未分配可用的API Key' },
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 // GET: 查询歌曲状态
 export async function GET(request: NextRequest) {
     try {
-        const { apiKey } = await getAssignedGatewayKey('suno');
+        const { apiKey } = await getAssignedGatewayKey();
         if (!apiKey) {
             return NextResponse.json(
                 { code: -1, message: '未分配可用的API Key' },

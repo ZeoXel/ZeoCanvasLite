@@ -1,8 +1,11 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Check, Crop, Move, Film, Loader2 } from 'lucide-react';
+import { Check, Crop, Move, Film, Loader2 } from 'lucide-react';
 import { globalVideoBlobCache, getProxiedUrl } from './shared';
+import { getFrameProxyUrl, shouldFetchVideoAsBlob } from './shared/videoLoadStrategy';
+import { CropAspectRatioSelector } from './shared/CropAspectRatioSelector';
+import { getCropAspectRatioLabel } from './shared/cropRatios';
 
 interface ImageCropperProps {
   imageSrc?: string;
@@ -10,15 +13,6 @@ interface ImageCropperProps {
   onConfirm: (croppedBase64: string) => void;
   onCancel: () => void;
 }
-
-const RATIOS = [
-    { label: '自由', value: null },
-    { label: '16:9', value: 16/9 },
-    { label: '9:16', value: 9/16 },
-    { label: '4:3', value: 4/3 },
-    { label: '3:4', value: 3/4 },
-    { label: '1:1', value: 1 },
-];
 
 type InteractionType = 'create' | 'move' | 'resize';
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se';
@@ -66,6 +60,13 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, videoSrc, 
       return;
     }
 
+    // 普通可直连 URL 直接播放，避免跨域 fetch 失败
+    if (!shouldFetchVideoAsBlob(videoSrc)) {
+      setVideoBlobUrl(videoSrc);
+      setIsVideoLoading(false);
+      return;
+    }
+
     // 检查全局缓存 - SecureVideo 加载的视频会存入这里
     const cached = globalVideoBlobCache.get(videoSrc);
     if (cached) {
@@ -80,7 +81,7 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, videoSrc, 
     let active = true;
     setIsVideoLoading(true);
 
-    const fetchUrl = getProxiedUrl(videoSrc);
+    const fetchUrl = getFrameProxyUrl(videoSrc);
     fetch(fetchUrl)
       .then(response => {
         if (!response.ok) throw new Error("Video fetch failed");
@@ -98,7 +99,11 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, videoSrc, 
       })
       .catch(err => {
         console.error("Video load error:", err);
-        if (active) setIsVideoLoading(false);
+        if (active) {
+          // 兜底：代理 fetch 失败时退回原地址，交给 <video> 直接加载
+          setVideoBlobUrl(videoSrc);
+          setIsVideoLoading(false);
+        }
       });
 
     return () => {
@@ -590,7 +595,7 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, videoSrc, 
                     </div>
                     {aspectRatio && (
                         <div className="bg-white/90 text-blue-400 border border-blue-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded-sm shadow-md">
-                           {RATIOS.find(r => r.value === aspectRatio)?.label}
+                           {getCropAspectRatioLabel(aspectRatio)}
                         </div>
                     )}
                 </div>
@@ -602,23 +607,7 @@ export const ImageCropper: React.FC<ImageCropperProps> = ({ imageSrc, videoSrc, 
       <div className="flex flex-col items-center gap-6 mt-8 w-full max-w-2xl px-4">
         
         {/* Aspect Ratio Selector */}
-        <div className="flex items-center gap-2 p-1 bg-white border border-slate-300 rounded-xl shadow-lg overflow-x-auto custom-scrollbar max-w-full">
-            {RATIOS.map(ratio => (
-                <button
-                    key={ratio.label}
-                    onClick={() => setAspectRatio(ratio.value)}
-                    className={`
-                        relative px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap
-                        ${aspectRatio === ratio.value 
-                            ? 'bg-blue-500 text-black shadow-md scale-105 z-10' 
-                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                        }
-                    `}
-                >
-                    {ratio.label}
-                </button>
-            ))}
-        </div>
+        <CropAspectRatioSelector value={aspectRatio} onChange={setAspectRatio} />
 
         {/* Action Buttons */}
         <div className="flex gap-4">

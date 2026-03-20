@@ -1,4 +1,4 @@
-import type { StudioSyncData } from '@/services/studioSyncTypes';
+import type { StudioSyncData } from '@/services/studioSyncService';
 
 export interface StudioCosSyncRecord {
   data: StudioSyncData;
@@ -63,7 +63,8 @@ export async function pushStudioSyncToCos(
     throw new Error('Failed to push studio sync data to COS');
   }
 
-  const record = json?.record || { data, updatedAt: Date.now() };
+  const updatedAt = json?.record?.updatedAt || Date.now();
+  const record = { data, updatedAt };
   updateFetchCache(record);
   return record;
 }
