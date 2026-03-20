@@ -14,6 +14,8 @@ import { appendCanvasToCache, removeCanvasFromCache, setCacheCurrentCanvasId } f
 import { removeItemWithTombstone } from "@/services/deletionUtils";
 import type { Canvas } from "@/types";
 
+const AUTH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUTH === 'true';
+
 const DashboardCanvasList = () => {
     const router = useRouter();
     const { user, isLoading: authLoading, isAuthenticated } = useAuth();
@@ -44,7 +46,7 @@ const DashboardCanvasList = () => {
         const loadCanvases = async () => {
             setLoading(true);
             try {
-                if (!isAuthenticated) {
+                if (AUTH_ENABLED && !isAuthenticated) {
                     setCanvases([]);
                     setCurrentCanvasId(null);
                     setDeletedItems({});
