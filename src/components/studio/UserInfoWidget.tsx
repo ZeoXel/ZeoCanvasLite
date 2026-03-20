@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { User, Settings, CreditCard, LogOut, Coins } from 'lucide-react';
+import { Settings, CreditCard, LogOut, Coins } from 'lucide-react';
+
+const AUTH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUTH === 'true';
 import { useAuth } from '@/contexts/AuthContext';
 import { useUserData } from '@/contexts/UserDataContext';
 import { UserAvatar } from './UserAvatar';
@@ -111,14 +113,14 @@ export const UserInfoWidget: React.FC<UserInfoWidgetProps> = ({
               {totalCredits.toFixed(2)}
             </span>
           </div>
-        ) : (
+        ) : AUTH_ENABLED ? (
           <button
             onClick={() => onOpenLogin?.()}
             className="px-2 py-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-500"
           >
             登录
           </button>
-        )}
+        ) : null}
       </div>
 
       {/* 悬浮菜单 - 与画布双击弹框样式统一 */}
@@ -184,7 +186,7 @@ export const UserInfoWidget: React.FC<UserInfoWidgetProps> = ({
                 </button>
               </div>
             </>
-          ) : (
+          ) : AUTH_ENABLED ? (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -196,7 +198,7 @@ export const UserInfoWidget: React.FC<UserInfoWidgetProps> = ({
               <Settings size={12} />
               <span>登录</span>
             </button>
-          )}
+          ) : null}
         </div>
       )}
     </div>

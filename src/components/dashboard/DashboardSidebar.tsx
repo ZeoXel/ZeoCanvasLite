@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
     Palette,
@@ -18,21 +17,24 @@ import { UserAvatar } from "@/components/studio/UserAvatar";
 import { useUserData } from "@/contexts/UserDataContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTaskLogs } from "@/contexts/TaskLogContext";
+import { brand } from "@/config/brand";
 
-const SidebarLogo = React.memo(function SidebarLogo({ theme }: { theme: "light" | "dark" }) {
+const AUTH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUTH === 'true';
+
+const SidebarLogo = React.memo(function SidebarLogo() {
     return (
         <div className="mb-8 flex h-12 items-center px-2">
-            <div className="relative h-12 w-[170px] overflow-hidden" suppressHydrationWarning>
-                <Image
-                    src={theme === "dark" ? "/logo-dark.svg" : "/logo-light.svg"}
-                    alt="ZeoCanvas"
-                    width={170}
-                    height={36}
-                    priority
-                    loading="eager"
-                    className="block"
-                />
-            </div>
+            <Link href="/canvases" className="group flex flex-col">
+                <span className="text-lg font-bold leading-tight tracking-tight text-gray-900 dark:text-white">
+                    {brand.namePrefix}
+                    <span className="bg-gradient-to-r from-blue-500 to-violet-500 bg-clip-text text-transparent">
+                        {brand.nameHighlight}
+                    </span>
+                </span>
+                <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500 tracking-wide">
+                    {brand.slogan}
+                </span>
+            </Link>
         </div>
     );
 });
@@ -89,7 +91,7 @@ const DashboardSidebar = () => {
 
         return (
         <aside className="fixed left-0 top-0 h-screen w-64 border-r border-gray-200 bg-white/80 px-4 py-6 backdrop-blur-xl dark:border-gray-800 dark:bg-black/80 flex flex-col">
-            <SidebarLogo theme={theme} />
+            <SidebarLogo />
 
             {/* Navigation */}
             <nav className="flex flex-1 flex-col gap-1">
@@ -117,32 +119,34 @@ const DashboardSidebar = () => {
             {/* User Widget at Bottom */}
             <div className="mt-auto border-t border-gray-200 pt-4 dark:border-gray-800">
                 <div className={`flex items-center gap-3 rounded-lg px-3 py-2.5 transition-all ${isAuthenticated ? 'hover:bg-gray-50 dark:hover:bg-white/5' : ''}`}>
-                    {isAuthenticated ? (
-                        <Link
-                            href="/profile"
-                            className="flex flex-1 min-w-0 items-center gap-3"
-                            aria-label="账户设置"
-                        >
-                            <UserAvatar name={userName} size={36} />
-                            <div className="min-w-0">
-                                <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                                    {userName}
-                                </p>
-                                <p className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
-                                    <Coins size={12} className="flex-shrink-0" />
-                                    <span>{isLoading ? '--' : balanceText}</span>
-                                </p>
-                            </div>
-                        </Link>
-                    ) : (
-                        <Link
-                            href="/auth"
-                            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white transition-all hover:bg-blue-700"
-                            aria-label="登录"
-                        >
-                            <LogIn size={16} />
-                            登录/注册
-                        </Link>
+                    {AUTH_ENABLED && (
+                        isAuthenticated ? (
+                            <Link
+                                href="/profile"
+                                className="flex flex-1 min-w-0 items-center gap-3"
+                                aria-label="账户设置"
+                            >
+                                <UserAvatar name={userName} size={36} />
+                                <div className="min-w-0">
+                                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                                        {userName}
+                                    </p>
+                                    <p className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                                        <Coins size={12} className="flex-shrink-0" />
+                                        <span>{isLoading ? '--' : balanceText}</span>
+                                    </p>
+                                </div>
+                            </Link>
+                        ) : (
+                            <Link
+                                href="/auth"
+                                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white transition-all hover:bg-blue-700"
+                                aria-label="登录"
+                            >
+                                <LogIn size={16} />
+                                登录/注册
+                            </Link>
+                        )
                     )}
                     <div className="flex gap-1">
                         <button
@@ -157,7 +161,7 @@ const DashboardSidebar = () => {
                         >
                             {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
                         </button>
-                        {isAuthenticated && (
+                        {AUTH_ENABLED && isAuthenticated && (
                             <Link
                                 href="/profile"
                                 onClick={(e) => e.stopPropagation()}

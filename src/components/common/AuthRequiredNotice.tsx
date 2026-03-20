@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
 
+const AUTH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUTH === 'true';
+
 export default function AuthRequiredNotice({
   className = "",
 }: {
@@ -10,7 +12,7 @@ export default function AuthRequiredNotice({
 }) {
   const { isAuthenticated, isLoading } = useAuth();
 
-  if (isLoading || isAuthenticated) return null;
+  if (!AUTH_ENABLED || isLoading || isAuthenticated) return null;
 
   return (
     <div className={`w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100 ${className}`}>
