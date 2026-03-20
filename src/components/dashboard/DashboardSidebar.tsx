@@ -25,7 +25,7 @@ const SidebarLogo = React.memo(function SidebarLogo() {
     return (
         <div className="mb-8 flex h-12 items-center px-2">
             <Link href="/canvases">
-                <span className="text-xl font-bold tracking-tight text-gray-900 dark:text-white">
+                <span className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
                     {brand.namePrefix}
                     <span className="bg-gradient-to-r from-blue-500 to-violet-500 bg-clip-text text-transparent">
                         {brand.nameHighlight}
