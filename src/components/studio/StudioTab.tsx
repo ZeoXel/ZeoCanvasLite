@@ -4671,6 +4671,9 @@ export default function StudioTab() {
             saveCurrentCanvas();
         }
 
+        // 清除初始跳过标记，确保新画布会被持久化
+        skipInitialPersistRef.current = false;
+
         const now = Date.now();
         const newCanvas: Canvas = {
             id: `canvas-${now}-${Math.floor(Math.random() * 1000)}`,
