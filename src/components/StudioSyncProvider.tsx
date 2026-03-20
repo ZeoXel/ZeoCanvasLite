@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { type StudioSyncData } from "@/services/studioSyncService";
 import { fetchStudioSyncFromCos, pushStudioSyncToCos, pushStudioSyncBeacon } from "@/services/studioSyncCosService";
@@ -9,6 +9,8 @@ import { replaceTaskLogs, loadTaskLogs, onTaskLogUpdate } from "@/services/taskL
 import { getScopedKey, setStorageUserId } from "@/services/storageScope";
 import { setCache } from "@/services/studioCache";
 import type { Canvas, Connection, Group, Workflow, AppNode, Subject } from "@/types";
+
+const CLOUD_SYNC_ENABLED = process.env.NEXT_PUBLIC_ENABLE_CLOUD_SYNC === 'true';
 
 const NODE_CONFIG_STORAGE_KEY = "zeocanvas_node_configs";
 const STUDIO_SYNC_META_KEY = "studio_sync_meta";
@@ -150,8 +152,17 @@ export default function StudioSyncProvider({ children }: { children: React.React
   const initialSyncDoneRef = useRef(false);
   const syncInFlightRef = useRef(false);
 
-  // 初始同步：进入时拉取云端数据
+  // 本地模式：云同步未启用时立即标记完成
   useEffect(() => {
+    if (CLOUD_SYNC_ENABLED) return;
+    if (_initialSyncComplete) return;
+    _initialSyncComplete = true;
+    _lastSyncTimestamp = Date.now();
+  }, []);
+
+  // 初始同步：进入时拉取云端数据（仅云同步启用时）
+  useEffect(() => {
+    if (!CLOUD_SYNC_ENABLED) return;
     if (authLoading || !isAuthenticated || !userId) return;
     if (initialSyncDoneRef.current) return;
 
@@ -172,17 +183,14 @@ export default function StudioSyncProvider({ children }: { children: React.React
         console.log('[Studio Sync Provider] Server updatedAt:', serverRecord?.updatedAt);
 
         if (!serverRecord) {
-          // 云端无数据，如果本地有数据则推送
           if (hasLocal) {
             console.log('[Studio Sync Provider] No server data, pushing local...');
             await pushStudioSyncToCos(localPayload);
           }
         } else if (serverRecord.updatedAt > localUpdatedAt) {
-          // 云端数据更新，应用到本地
           console.log('[Studio Sync Provider] Server is newer, applying...');
           await applySyncToStorage(serverRecord.data as StudioSyncData, serverRecord.updatedAt);
         } else if (hasLocal && localUpdatedAt > serverRecord.updatedAt) {
-          // 本地数据更新，推送到云端
           console.log('[Studio Sync Provider] Local is newer, pushing...');
           await pushStudioSyncToCos(localPayload);
         } else {
@@ -202,39 +210,33 @@ export default function StudioSyncProvider({ children }: { children: React.React
     initialSync();
   }, [authLoading, isAuthenticated, userId]);
 
-  // 用户切换时重置同步状态
+  // 用户切换时重置同步状态（仅云同步启用时）
   useEffect(() => {
+    if (!CLOUD_SYNC_ENABLED) return;
     _initialSyncComplete = false;
     _lastSyncTimestamp = 0;
   }, [userId]);
 
-  // 离开时推送：使用 sendBeacon 确保数据发送
+  // 离开时推送（仅云同步启用时）
   useEffect(() => {
+    if (!CLOUD_SYNC_ENABLED) return;
     if (!isAuthenticated || !userId) return;
 
     const pushOnLeave = async () => {
       if (!initialSyncDoneRef.current) return;
-
       try {
         const payload = await buildPayloadFromStorage();
         if (!hasAnyData(payload)) return;
-
-        // 使用 sendBeacon，确保页面关闭后仍能发送
         pushStudioSyncBeacon(payload);
-      } catch (error) {
+      } catch {
         // 静默处理
       }
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        pushOnLeave();
-      }
+      if (document.visibilityState === "hidden") pushOnLeave();
     };
-
-    const handlePageHide = () => {
-      pushOnLeave();
-    };
+    const handlePageHide = () => pushOnLeave();
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pagehide", handlePageHide);
@@ -242,13 +244,13 @@ export default function StudioSyncProvider({ children }: { children: React.React
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pagehide", handlePageHide);
-      // 组件卸载时也推送
       pushOnLeave();
     };
   }, [isAuthenticated, userId]);
 
-  // TaskLog 更新时推送（防抖）
+  // TaskLog 更新时推送（仅云同步启用时）
   useEffect(() => {
+    if (!CLOUD_SYNC_ENABLED) return;
     if (authLoading || !isAuthenticated || !userId) return;
 
     let syncTimer: NodeJS.Timeout | null = null;
@@ -260,7 +262,6 @@ export default function StudioSyncProvider({ children }: { children: React.React
       syncTimer = setTimeout(async () => {
         if (syncInFlightRef.current) return;
         syncInFlightRef.current = true;
-
         try {
           const payload = await buildPayloadFromStorage();
           await pushStudioSyncToCos(payload);
@@ -273,7 +274,6 @@ export default function StudioSyncProvider({ children }: { children: React.React
     };
 
     const unsubscribe = onTaskLogUpdate(scheduleSync);
-
     return () => {
       unsubscribe();
       if (syncTimer) clearTimeout(syncTimer);
@@ -285,13 +285,11 @@ export default function StudioSyncProvider({ children }: { children: React.React
 
 // 导出手动同步函数供外部调用
 export async function manualSyncFromCloud(options?: { force?: boolean; userId?: string }): Promise<boolean> {
+  if (!CLOUD_SYNC_ENABLED) return false;
   try {
-    if (options?.userId) {
-      setStorageUserId(options.userId);
-    }
+    if (options?.userId) setStorageUserId(options.userId);
     const serverRecord = await fetchStudioSyncFromCos({ force: options?.force ?? true });
     if (!serverRecord) return false;
-
     await applySyncToStorage(serverRecord.data as StudioSyncData, serverRecord.updatedAt);
     return true;
   } catch (error) {
@@ -300,22 +298,18 @@ export async function manualSyncFromCloud(options?: { force?: boolean; userId?: 
   }
 }
 
-// 导出手动推送函数供外部调用（新增/删除等关键操作后立即上云）
+// 导出手动推送函数供外部调用
 export async function pushLocalSyncToCloud(options?: { keepalive?: boolean; userId?: string }): Promise<boolean> {
+  if (!CLOUD_SYNC_ENABLED) return false;
   try {
-    if (options?.userId) {
-      setStorageUserId(options.userId);
-    }
-
+    if (options?.userId) setStorageUserId(options.userId);
     const payload = await buildPayloadFromStorage();
     if (!hasAnyData(payload)) return true;
-
     if (options?.keepalive) {
       pushStudioSyncBeacon(payload);
     } else {
       await pushStudioSyncToCos(payload);
     }
-
     _lastSyncTimestamp = Date.now();
     return true;
   } catch (error) {

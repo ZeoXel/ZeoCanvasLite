@@ -10,6 +10,8 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const COS = require('cos-js-sdk-v5') as any;
 
+const CLOUD_SYNC_ENABLED = process.env.NEXT_PUBLIC_ENABLE_CLOUD_SYNC === 'true';
+
 // COS 配置
 const COS_CONFIG = {
   bucket: process.env.NEXT_PUBLIC_COS_BUCKET || 'lsjx-1354453097',
@@ -278,10 +280,25 @@ async function uploadToCosViaServer(
   return json?.record;
 }
 
+// 本地模式：将 File/Blob 转换为 data URL
+async function toDataUrl(input: File | Blob | string): Promise<string> {
+  if (typeof input === 'string') return input;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(input);
+  });
+}
+
 export async function uploadToCos(
   input: File | Blob | string,
   options: UploadOptions = {}
 ): Promise<CosUploadResult> {
+  if (!CLOUD_SYNC_ENABLED) {
+    const dataUrl = await toDataUrl(input);
+    return { url: dataUrl, key: '', etag: '' };
+  }
   try {
     return await uploadToCosDirect(input, options);
   } catch (error) {
@@ -298,6 +315,10 @@ export async function uploadToCosWithKey(
   key: string,
   options: UploadOptions = {}
 ): Promise<CosUploadResult> {
+  if (!CLOUD_SYNC_ENABLED) {
+    const dataUrl = await toDataUrl(input);
+    return { url: dataUrl, key: '', etag: '' };
+  }
   const cos = getCosInstance();
   const { onProgress, contentType } = options;
 
@@ -409,17 +430,17 @@ export async function smartUpload(
   if (!input) return '';
 
   // 已经是 URL
-  if (input.startsWith('http')) {
-    return input;
-  }
+  if (input.startsWith('http')) return input;
 
-  // Base64，需要上传
+  // 本地模式：直接返回 data URL
+  if (!CLOUD_SYNC_ENABLED) return input;
+
+  // Base64，需要上传到 COS
   if (isBase64(input)) {
     const result = await uploadToCos(input, options);
     return result.url;
   }
 
-  // 其他情况原样返回
   return input;
 }
 
