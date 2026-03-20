@@ -24,15 +24,12 @@ const AUTH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUTH === 'true';
 const SidebarLogo = React.memo(function SidebarLogo() {
     return (
         <div className="mb-8 flex h-12 items-center px-2">
-            <Link href="/canvases" className="group flex flex-col">
-                <span className="text-lg font-bold leading-tight tracking-tight text-gray-900 dark:text-white">
+            <Link href="/canvases">
+                <span className="text-xl font-bold tracking-tight text-gray-900 dark:text-white">
                     {brand.namePrefix}
                     <span className="bg-gradient-to-r from-blue-500 to-violet-500 bg-clip-text text-transparent">
                         {brand.nameHighlight}
                     </span>
-                </span>
-                <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500 tracking-wide">
-                    {brand.slogan}
                 </span>
             </Link>
         </div>
